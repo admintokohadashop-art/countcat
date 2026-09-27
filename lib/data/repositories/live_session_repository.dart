@@ -1,16 +1,19 @@
 import 'package:sqflite/sqflite.dart';
 
 import '../database/app_database.dart';
+import 'account_repository.dart';
 import '../models/live_session.dart';
 
 class LiveSessionRepository {
   LiveSessionRepository(this._database);
   final AppDatabase _database;
+  Future<int?> _activeId() async => (await AccountRepository(_database).activeAccount())?.id;
 
   Future<LiveSession> createSession({required String name, DateTime? startedAt}) async {
     final now = DateTime.now().toUtc();
     final database = await _database.database;
-    final id = await database.insert('live_sessions', {'name': name, 'started_at': startedAt?.toUtc().toIso8601String(), 'created_at': now.toIso8601String(), 'updated_at': now.toIso8601String()});
+    final accountId = await _activeId();
+    final id = await database.insert('live_sessions', {'account_id': accountId, 'name': name, 'started_at': startedAt?.toUtc().toIso8601String(), 'created_at': now.toIso8601String(), 'updated_at': now.toIso8601String()});
     final session = LiveSession(id: id, name: name, startedAt: startedAt?.toUtc(), createdAt: now, updatedAt: now);
     await setSelectedSessionId(id);
     return session;
@@ -18,7 +21,8 @@ class LiveSessionRepository {
 
   Future<List<LiveSession>> listSessions() async {
     final database = await _database.database;
-    final rows = await database.query('live_sessions', orderBy: 'created_at DESC, id DESC');
+    final accountId = await _activeId();
+    final rows = await database.query('live_sessions', where: accountId == null ? null : 'account_id = ?', whereArgs: accountId == null ? null : [accountId], orderBy: 'created_at DESC, id DESC');
     return rows.map(LiveSession.fromMap).toList();
   }
 
