@@ -190,6 +190,23 @@ void main() {
     expect(totals.hpp, 10000);
     expect(totals.profit, 6000);
   });
+  test('account avatar path persists and can be removed', () async {
+    final account = await accounts.activeAccount();
+    if (account == null) {
+      fail("Active account missing");
+    }
+    const avatarPath = "/tmp/countcat-avatar-test.jpg";
+    await accounts.update(account.copyWith(photoPath: avatarPath));
+    var stored = await accounts.activeAccount();
+    expect(stored?.photoPath, avatarPath);
+    if (stored == null) {
+      fail("Account disappeared");
+    }
+    await accounts.update(stored.copyWith(photoPath: null));
+    stored = await accounts.activeAccount();
+    expect(stored?.photoPath, isNull);
+  });
+
   test('monthly snapshots remain isolated by submitted local calendar month', () async {
     final reports = MonthlyReportRepository(database);
     await transactions.insertTransaction(_transaction(orderId: 'AUG', gmvAmount: 10000, netIncomeAmount: 8000, hppUnitAmount: 2000, createdAt: DateTime(2026, 8, 31, 23, 0)));
