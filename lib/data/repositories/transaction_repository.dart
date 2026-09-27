@@ -1,6 +1,7 @@
 import 'package:sqflite/sqflite.dart' show ConflictAlgorithm, DatabaseException;
 
 import '../database/app_database.dart';
+import 'account_repository.dart';
 import '../models/statuses.dart';
 import '../models/transaction.dart';
 
@@ -12,11 +13,13 @@ class DuplicateOrderIdException implements Exception {
 class TransactionRepository {
   TransactionRepository(this._database);
   final AppDatabase _database;
+  Future<int?> _activeId() async => (await AccountRepository(_database).activeAccount())?.id;
 
   Future<int> insertTransaction(Transaction transaction) async {
     try {
       final database = await _database.database;
-      final values = Map<String, Object?>.from(transaction.toMap())..remove('id');
+      final accountId = transaction.accountId ?? await _activeId();
+      final values = Map<String, Object?>.from(transaction.copyWith(accountId: accountId).toMap())..remove('id');
       return await database.insert('transactions', values);
     } on DatabaseException catch (error) {
       if (error.isUniqueConstraintError()) throw DuplicateOrderIdException(transaction.orderId);
@@ -27,6 +30,8 @@ class TransactionRepository {
   Future<List<Transaction>> listTransactions({String search = '', int? liveSessionId, PaymentStatus? paymentStatus, OrderStatus? orderStatus, DateTime? periodStart, DateTime? periodEnd}) async {
     final clauses = <String>[];
     final arguments = <Object?>[];
+    final accountId = await _activeId();
+    if (accountId != null) { clauses.add('account_id = ?'); arguments.add(accountId); }
     final trimmedSearch = search.trim();
     if (trimmedSearch.isNotEmpty) {
       clauses.add('(order_id LIKE ? OR product_code LIKE ?)');
@@ -44,7 +49,7 @@ class TransactionRepository {
 
   Future<void> deleteTransaction(int id) async {
     final database = await _database.database;
-    await database.delete('transactions', where: 'id = ?', whereArgs: [id]);
+    final accountId = await _activeId(); await database.delete('transactions', where: accountId == null ? 'id = ?' : 'id = ? AND account_id = ?', whereArgs: accountId == null ? [id] : [id, accountId]);
   }
 
   Future<void> updateTransaction(Transaction transaction) async {
@@ -56,7 +61,8 @@ class TransactionRepository {
         ..remove('created_at')
         ..['updated_at'] = DateTime.now().toUtc().toIso8601String();
       final database = await _database.database;
-      await database.update('transactions', values, where: 'id = ?', whereArgs: [id], conflictAlgorithm: ConflictAlgorithm.abort);
+      final accountId = await _activeId();
+      await database.update('transactions', values, where: accountId == null ? 'id = ?' : 'id = ? AND account_id = ?', whereArgs: accountId == null ? [id] : [id, accountId], conflictAlgorithm: ConflictAlgorithm.abort);
     } on DatabaseException catch (error) {
       if (error.isUniqueConstraintError()) throw DuplicateOrderIdException(transaction.orderId);
       rethrow;
