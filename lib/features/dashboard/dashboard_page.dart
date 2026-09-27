@@ -8,20 +8,22 @@ import '../../data/models/account.dart';
 import '../../data/repositories/account_repository.dart';
 
 class DashboardPage extends StatefulWidget {
-  const DashboardPage({super.key});
+  const DashboardPage({super.key, this.repository});
+
+  final AccountRepository? repository;
   @override
   State<DashboardPage> createState() => _DashboardPageState();
 }
 
 class _DashboardPageState extends State<DashboardPage> {
-  final _repo = AccountRepository(AppDatabase.instance);
+  late final AccountRepository _repo;
   final _avatars = AvatarStorage();
   List<Account> _items = [];
   Account? _active;
   bool _loading = true;
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() { super.initState(); _repo = widget.repository ?? AccountRepository(AppDatabase.instance); _load(); }
   Future<void> _load() async { final items = await _repo.listAccounts(); final active = await _repo.activeAccount(); if (mounted) setState(() { _items = items; _active = active; _loading = false; }); }
 
   Future<void> _create() async {

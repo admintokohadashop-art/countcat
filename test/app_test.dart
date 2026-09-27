@@ -1,36 +1,29 @@
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:sqflite/sqflite.dart' as sqflite;
-import 'package:sqflite_common_ffi/sqflite_ffi.dart';
-import 'package:tiktok_seller/app/tiktok_seller_app.dart';
+import 'package:tiktok_seller/data/database/app_database.dart';
+import 'package:tiktok_seller/data/models/account.dart';
+import 'package:tiktok_seller/data/repositories/account_repository.dart';
+import 'package:tiktok_seller/features/dashboard/dashboard_page.dart';
+
+class _FakeAccountRepository extends AccountRepository {
+  _FakeAccountRepository() : super(AppDatabase.inMemoryForTesting());
+
+  @override
+  Future<List<Account>> listAccounts() async => const [];
+
+  @override
+  Future<Account?> activeAccount() async => null;
+}
 
 void main() {
-  setUpAll(() {
-    sqfliteFfiInit();
-    sqflite.databaseFactory = databaseFactoryFfi;
-  });
-
   testWidgets('shows the account-selector dashboard initially', (tester) async {
-    await tester.pumpWidget(const TikTokSellerApp());
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(seconds: 5));
-    });
-    await tester.pump();
-    await tester.pump();
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(seconds: 1));
-    });
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(seconds: 5));
-    });
+    final repository = _FakeAccountRepository();
+
+    await tester.pumpWidget(MaterialApp(home: DashboardPage(repository: repository)));
     await tester.pump();
     await tester.pump();
 
-    expect(find.text('Dashboard'), findsWidgets);
-    await tester.runAsync(() async {
-      await Future<void>.delayed(const Duration(seconds: 5));
-    });
-    await tester.pump();
-    await tester.pump();
+    expect(find.text('Dashboard'), findsOneWidget);
     expect(find.text('Create New Account'), findsOneWidget);
   });
 }
