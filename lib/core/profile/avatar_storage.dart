@@ -1,11 +1,13 @@
 import 'dart:io';
 
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
+import '../storage/countcat_data_paths.dart';
 
 class AvatarStorage {
-  AvatarStorage({ImagePicker? picker}) : _picker = picker ?? ImagePicker();
+  AvatarStorage({ImagePicker? picker, CountCatDataPaths? paths})
+      : _picker = picker ?? ImagePicker(), _paths = paths ?? CountCatDataPaths();
   final ImagePicker _picker;
+  final CountCatDataPaths _paths;
 
   Future<String?> pickAndCopy() async {
     final selected = await _picker.pickImage(source: ImageSource.gallery);
@@ -36,8 +38,7 @@ class AvatarStorage {
   }
 
   Future<Directory> _avatarDirectory() async {
-    final support = await getApplicationSupportDirectory();
-    return Directory('${support.path}${Platform.pathSeparator}avatars').create(recursive: true);
+    return _paths.avatarsDirectory;
   }
 
   String _extension(String path) {
