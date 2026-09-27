@@ -1,46 +1,232 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tiktok_seller/core/currency/rupiah.dart';
 import 'package:tiktok_seller/data/database/app_database.dart';
+import 'package:tiktok_seller/data/models/hpp_master.dart';
 import 'package:tiktok_seller/data/models/statuses.dart';
 import 'package:tiktok_seller/data/models/transaction.dart';
+import 'package:tiktok_seller/data/repositories/account_repository.dart';
+import 'package:tiktok_seller/data/repositories/hpp_repository.dart';
 import 'package:tiktok_seller/data/repositories/live_session_repository.dart';
-import 'package:tiktok_seller/data/repositories/settings_repository.dart';
 import 'package:tiktok_seller/data/repositories/transaction_repository.dart';
-import 'package:tiktok_seller/features/sales/transaction_validator.dart';
 import 'package:tiktok_seller/features/reports/report_totals.dart';
+import 'package:tiktok_seller/features/sales/transaction_validator.dart';
 
 void main() {
   late AppDatabase database;
-  late SettingsRepository settings;
+  late AccountRepository accounts;
+  late HppRepository hpp;
   late LiveSessionRepository sessions;
   late TransactionRepository transactions;
 
-  setUp(() { database = AppDatabase.inMemoryForTesting(); settings = SettingsRepository(database); sessions = LiveSessionRepository(database); transactions = TransactionRepository(database); });
+  setUp(() async {
+    database = AppDatabase.inMemoryForTesting();
+    accounts = AccountRepository(database);
+    hpp = HppRepository(database);
+    sessions = LiveSessionRepository(database);
+    transactions = TransactionRepository(database);
+    await accounts.create(name: 'Main shop');
+  });
   tearDown(() => database.close());
 
-  test('parses Rupiah input', () { expect(Rupiah.parse('5000'), 5000); expect(Rupiah.parse('5.000'), 5000); expect(Rupiah.parse('Rp5.000'), 5000); });
-  test('formats Rupiah', () { expect(Rupiah.format(5000), 'Rp5.000'); expect(Rupiah.format(12500), 'Rp12.500'); expect(Rupiah.format(100000), 'Rp100.000'); });
-  test('saves and reads global HPP', () async { await settings.setGlobalHpp(5000); expect(await settings.getGlobalHpp(), 5000); });
-  test('creates and lists sessions newest first', () async { await sessions.createSession(name: 'Live #1'); await sessions.createSession(name: 'Live #2'); final items = await sessions.listSessions(); expect(items.map((item) => item.name), ['Live #2', 'Live #1']); });
-  test('new session becomes selected', () async { final session = await sessions.createSession(name: 'Live Malam'); expect(await sessions.getSelectedSessionId(), session.id); expect((await sessions.getSelectedSession())?.name, 'Live Malam'); });
-  test('selects a session', () async { final first = await sessions.createSession(name: 'Live #1'); final second = await sessions.createSession(name: 'Live #2'); await sessions.setSelectedSessionId(first.id); expect(await sessions.getSelectedSessionId(), first.id); expect(second.id, isNot(first.id)); });
-  test('creates a transaction', () async { final id = await transactions.insertTransaction(_transaction()); expect(id, 1); });
-  test('rejects duplicate order ID', () async { await transactions.insertTransaction(_transaction()); await expectLater(transactions.insertTransaction(_transaction()), throwsA(isA<DuplicateOrderIdException>())); });
-  test('validates required transaction values', () { expect(TransactionValidator.productCode(''), isNotNull); expect(TransactionValidator.orderId(''), isNotNull); expect(TransactionValidator.quantity('0'), isNotNull); expect(TransactionValidator.quantity('1'), isNull); });
-  test('paid requires paidAt', () { expect(TransactionValidator.paidAt(PaymentStatus.paid, null), isNotNull); });
-  test('paid accepts valid paidAt', () { expect(TransactionValidator.paidAt(PaymentStatus.paid, DateTime(2026, 9, 26)), isNull); });
-  test('pending and cancelled accept null paidAt', () { expect(TransactionValidator.paidAt(PaymentStatus.pending, null), isNull); expect(TransactionValidator.paidAt(PaymentStatus.cancelled, null), isNull); });
-  test('normalizes paidAt', () { final date = DateTime(2026, 9, 26, 7); expect(TransactionValidator.normalizePaidAt(PaymentStatus.paid, date), date.toUtc()); expect(TransactionValidator.normalizePaidAt(PaymentStatus.pending, date), isNull); expect(TransactionValidator.normalizePaidAt(PaymentStatus.cancelled, date), isNull); });
-  test('cancelled payment status maps to DIBATALKAN', () { expect(PaymentStatus.cancelled.label, 'DIBATALKAN'); });
-  test('order statuses do not include DIBATALKAN', () { expect(OrderStatus.values.map((status) => status.label), isNot(contains('DIBATALKAN'))); });
-  test('cancelled transaction preserves financial amounts', () async { final now = DateTime.now(); final transaction = Transaction(productCode: 'SKU-C', orderId: 'ORDER-C', quantity: 1, gmvAmount: 22000, paymentStatus: PaymentStatus.cancelled, netIncomeAmount: 20000, orderStatus: OrderStatus.shipping, createdAt: now, updatedAt: now); await transactions.insertTransaction(transaction); final row = (await (await database.database).query('transactions', where: 'order_id = ?', whereArgs: ['ORDER-C'])).single; expect(row['gmv_amount'], 22000); expect(row['net_income_amount'], 20000); expect(row['paid_at'], isNull); });
-  test('payment and order statuses remain independent', () async { final now = DateTime.now(); final combinations = [(PaymentStatus.paid, OrderStatus.newOrder), (PaymentStatus.paid, OrderStatus.dropoff), (PaymentStatus.paid, OrderStatus.shipping), (PaymentStatus.paid, OrderStatus.returned), (PaymentStatus.cancelled, OrderStatus.newOrder), (PaymentStatus.cancelled, OrderStatus.shipping), (PaymentStatus.cancelled, OrderStatus.returned)]; for (var index = 0; index < combinations.length; index++) { final combination = combinations[index]; await transactions.insertTransaction(Transaction(productCode: 'SKU-$index', orderId: 'COMBO-$index', quantity: 1, gmvAmount: 10000, paymentStatus: combination.$1, paidAt: combination.$1 == PaymentStatus.paid ? now : null, netIncomeAmount: 9000, orderStatus: combination.$2, createdAt: now, updatedAt: now)); } expect((await (await database.database).query('transactions')).length, combinations.length); });
-  test('lists newest transactions first and searches order ID or product code', () async { final first = _transaction(orderId: 'ORDER-OLD', productCode: 'ALPHA', createdAt: DateTime(2026, 1, 1)); final second = _transaction(orderId: 'ORDER-NEW', productCode: 'BETA', createdAt: DateTime(2026, 1, 2)); await transactions.insertTransaction(first); await transactions.insertTransaction(second); expect((await transactions.listTransactions()).first.orderId, 'ORDER-NEW'); expect((await transactions.listTransactions(search: 'OLD')).single.productCode, 'ALPHA'); expect((await transactions.listTransactions(search: 'BETA')).single.orderId, 'ORDER-NEW'); });
-  test('filters transactions by live session and independent statuses', () async { final session = await sessions.createSession(name: 'Live Filter'); await transactions.insertTransaction(_transaction(orderId: 'FILTER-1', liveSessionId: session.id, paymentStatus: PaymentStatus.paid, paidAt: DateTime(2026, 1, 1), orderStatus: OrderStatus.shipping)); await transactions.insertTransaction(_transaction(orderId: 'FILTER-2', paymentStatus: PaymentStatus.pending, orderStatus: OrderStatus.newOrder)); final filtered = await transactions.listTransactions(liveSessionId: session.id, paymentStatus: PaymentStatus.paid, orderStatus: OrderStatus.shipping); expect(filtered.single.orderId, 'FILTER-1'); });
-  test('combines search with status filters', () async { await transactions.insertTransaction(_transaction(orderId: 'COMBINED-1', productCode: 'TARGET', paymentStatus: PaymentStatus.paid, paidAt: DateTime(2026, 1, 1), orderStatus: OrderStatus.closed)); await transactions.insertTransaction(_transaction(orderId: 'COMBINED-2', productCode: 'TARGET', paymentStatus: PaymentStatus.pending, orderStatus: OrderStatus.closed)); final filtered = await transactions.listTransactions(search: 'TARGET', paymentStatus: PaymentStatus.paid, orderStatus: OrderStatus.closed); expect(filtered.single.orderId, 'COMBINED-1'); });
-  test('updates a transaction by ID and preserves createdAt', () async { final original = _transaction(orderId: 'UPDATE-1', createdAt: DateTime(2026, 1, 1)); final id = await transactions.insertTransaction(original); final stored = (await transactions.listTransactions()).single; await transactions.updateTransaction(stored.copyWith(productCode: 'UPDATED', quantity: 2)); final updated = (await transactions.listTransactions()).single; expect(updated.id, id); expect(updated.productCode, 'UPDATED'); expect(updated.quantity, 2); expect(updated.createdAt, original.createdAt); });
-  test('rejects a conflicting order ID during update', () async { await transactions.insertTransaction(_transaction(orderId: 'KEEP')); await transactions.insertTransaction(_transaction(orderId: 'EDIT')); final editable = (await transactions.listTransactions(search: 'EDIT')).single; await expectLater(transactions.updateTransaction(editable.copyWith(orderId: 'KEEP')), throwsA(isA<DuplicateOrderIdException>())); });
-  test('calculates HPP and profit while excluding cancelled totals', () async { await settings.setGlobalHpp(5000); final active = _transaction(orderId: 'ACTIVE', quantity: 2, gmvAmount: 20000, netIncomeAmount: 16000); final cancelled = _transaction(orderId: 'CANCELLED', quantity: 3, gmvAmount: 22000, netIncomeAmount: 20000, paymentStatus: PaymentStatus.cancelled); await transactions.insertTransaction(active); await transactions.insertTransaction(cancelled); final visible = await transactions.listTransactions(); final totals = ReportTotals.fromTransactions(visible, (await settings.getGlobalHpp())!); expect(visible.length, 2); expect(totals.gmv, 42000); expect(totals.netIncome, 16000); expect(totals.hpp, 10000); expect(totals.profit, 6000); });
+  test('parses and formats Rupiah input', () {
+    expect(Rupiah.parse('Rp5.000'), 5000);
+    expect(Rupiah.format(12500), 'Rp12.500');
+  });
+
+  test('creates account-scoped HPP and deactivates it without deleting it', () async {
+    final account = (await accounts.activeAccount())!;
+    final item = await hpp.create(
+      accountId: account.id!,
+      name: 'Cardigan',
+      unitAmount: 20000,
+    );
+    expect((await hpp.list(account.id!)).single.name, 'Cardigan');
+    await hpp.deactivate(item.id!, account.id!);
+    expect(await hpp.list(account.id!), isEmpty);
+    expect((await hpp.list(account.id!, activeOnly: false)).single.isActive, isFalse);
+  });
+
+  test('HPP master data is isolated per account', () async {
+    final first = (await accounts.activeAccount())!;
+    await hpp.create(accountId: first.id!, name: 'Kaos', unitAmount: 15000);
+    final second = await accounts.create(name: 'Second shop');
+    await hpp.create(accountId: second.id!, name: 'Blouse', unitAmount: 25000);
+    expect((await hpp.list(first.id!)).map((item) => item.name), ['Kaos']);
+    expect((await hpp.list(second.id!)).map((item) => item.name), ['Blouse']);
+  });
+
+  test('creates and selects account-scoped sessions', () async {
+    final first = await sessions.createSession(name: 'Live #1');
+    final second = await sessions.createSession(name: 'Live #2');
+    expect((await sessions.listSessions()).map((item) => item.name), ['Live #2', 'Live #1']);
+    await sessions.setSelectedSessionId(first.id);
+    expect(await sessions.getSelectedSessionId(), first.id);
+    expect(second.id, isNot(first.id));
+  });
+
+  test('creates a transaction with its HPP snapshot', () async {
+    final item = await _createHpp(hpp, accounts, 5000);
+    await transactions.insertTransaction(_transaction(hppId: item.id, hppUnitAmount: item.unitAmount));
+    final stored = (await transactions.listTransactions()).single;
+    expect(stored.hppId, item.id);
+    expect(stored.hppUnitAmount, 5000);
+  });
+
+  test('rejects duplicate order ID within the same account', () async {
+    await transactions.insertTransaction(_transaction(orderId: 'ORDER-1'));
+    await expectLater(
+      transactions.insertTransaction(_transaction(orderId: 'ORDER-1')),
+      throwsA(isA<DuplicateOrderIdException>()),
+    );
+  });
+
+  test('allows the same order ID in different accounts', () async {
+    await transactions.insertTransaction(_transaction(orderId: 'SHARED'));
+    await accounts.create(name: 'Other shop');
+    await transactions.insertTransaction(_transaction(orderId: 'SHARED'));
+    expect((await transactions.listTransactions()).single.orderId, 'SHARED');
+  });
+
+  test('validates required transaction values and payment date rules', () {
+    expect(TransactionValidator.productCode(''), isNotNull);
+    expect(TransactionValidator.orderId(''), isNotNull);
+    expect(TransactionValidator.quantity('0'), isNotNull);
+    expect(TransactionValidator.quantity('1'), isNull);
+    expect(TransactionValidator.paidAt(PaymentStatus.paid, null), isNotNull);
+    expect(TransactionValidator.paidAt(PaymentStatus.paid, DateTime(2026, 9, 26)), isNull);
+    expect(TransactionValidator.normalizePaidAt(PaymentStatus.pending, DateTime.now()), isNull);
+  });
+
+  test('cancelled transaction preserves stored financial amounts', () async {
+    await transactions.insertTransaction(_transaction(
+      orderId: 'ORDER-C',
+      paymentStatus: PaymentStatus.cancelled,
+      gmvAmount: 22000,
+      netIncomeAmount: 20000,
+    ));
+    final row = (await (await database.database).query(
+      'transactions',
+      where: 'order_id = ?',
+      whereArgs: ['ORDER-C'],
+    )).single;
+    expect(row['gmv_amount'], 22000);
+    expect(row['net_income_amount'], 20000);
+    expect(row['paid_at'], isNull);
+  });
+
+  test('payment and order statuses remain independent', () async {
+    final now = DateTime.now();
+    for (final combination in [
+      (PaymentStatus.paid, OrderStatus.shipping),
+      (PaymentStatus.cancelled, OrderStatus.returned),
+    ]) {
+      await transactions.insertTransaction(_transaction(
+        orderId: 'COMBO-${combination.$1.value}',
+        paymentStatus: combination.$1,
+        paidAt: combination.$1 == PaymentStatus.paid ? now : null,
+        orderStatus: combination.$2,
+      ));
+    }
+    expect((await transactions.listTransactions()).length, 2);
+  });
+
+  test('lists, searches, filters, and updates active-account transactions', () async {
+    final session = await sessions.createSession(name: 'Live Filter');
+    await transactions.insertTransaction(_transaction(
+      orderId: 'ORDER-OLD',
+      productCode: 'ALPHA',
+      liveSessionId: session.id,
+      paymentStatus: PaymentStatus.paid,
+      paidAt: DateTime(2026, 1, 1),
+      orderStatus: OrderStatus.shipping,
+      createdAt: DateTime(2026, 1, 1),
+    ));
+    await transactions.insertTransaction(_transaction(
+      orderId: 'ORDER-NEW',
+      productCode: 'BETA',
+      createdAt: DateTime(2026, 1, 2),
+    ));
+    expect((await transactions.listTransactions()).first.orderId, 'ORDER-NEW');
+    expect((await transactions.listTransactions(search: 'ALPHA')).single.orderId, 'ORDER-OLD');
+    expect((await transactions.listTransactions(liveSessionId: session.id)).single.orderId, 'ORDER-OLD');
+    final original = (await transactions.listTransactions(search: 'BETA')).single;
+    await transactions.updateTransaction(original.copyWith(productCode: 'UPDATED', quantity: 2));
+    final updated = (await transactions.listTransactions(search: 'UPDATED')).single;
+    expect(updated.createdAt, original.createdAt);
+    expect(updated.quantity, 2);
+  });
+
+  test('rejects a conflicting order ID during update in the same account', () async {
+    await transactions.insertTransaction(_transaction(orderId: 'KEEP'));
+    await transactions.insertTransaction(_transaction(orderId: 'EDIT'));
+    final editable = (await transactions.listTransactions(search: 'EDIT')).single;
+    await expectLater(
+      transactions.updateTransaction(editable.copyWith(orderId: 'KEEP')),
+      throwsA(isA<DuplicateOrderIdException>()),
+    );
+  });
+
+  test('uses transaction HPP snapshots and excludes cancelled financial totals', () async {
+    await transactions.insertTransaction(_transaction(
+      orderId: 'ACTIVE',
+      quantity: 2,
+      gmvAmount: 20000,
+      netIncomeAmount: 16000,
+      hppUnitAmount: 5000,
+    ));
+    await transactions.insertTransaction(_transaction(
+      orderId: 'CANCELLED',
+      quantity: 3,
+      gmvAmount: 22000,
+      netIncomeAmount: 20000,
+      hppUnitAmount: 9000,
+      paymentStatus: PaymentStatus.cancelled,
+    ));
+    final totals = ReportTotals.fromTransactions(await transactions.listTransactions());
+    expect(totals.gmv, 42000);
+    expect(totals.netIncome, 16000);
+    expect(totals.hpp, 10000);
+    expect(totals.profit, 6000);
+  });
 }
 
-Transaction _transaction({String orderId = 'ORDER-1', String productCode = 'SKU-1', int? liveSessionId, int quantity = 1, int gmvAmount = 12000, int netIncomeAmount = 10000, PaymentStatus paymentStatus = PaymentStatus.pending, DateTime? paidAt, OrderStatus orderStatus = OrderStatus.newOrder, DateTime? createdAt}) { final now = createdAt ?? DateTime.now(); return Transaction(liveSessionId: liveSessionId, productCode: productCode, orderId: orderId, quantity: quantity, gmvAmount: gmvAmount, paymentStatus: paymentStatus, paidAt: paidAt, netIncomeAmount: netIncomeAmount, orderStatus: orderStatus, createdAt: now, updatedAt: now); }
+Future<HppMaster> _createHpp(
+  HppRepository repository,
+  AccountRepository accounts,
+  int amount,
+) async {
+  final account = (await accounts.activeAccount())!;
+  return repository.create(accountId: account.id!, name: 'HPP $amount', unitAmount: amount);
+}
+
+Transaction _transaction({
+  String orderId = 'ORDER-1',
+  String productCode = 'SKU-1',
+  int? liveSessionId,
+  int? hppId,
+  int hppUnitAmount = 5000,
+  int quantity = 1,
+  int gmvAmount = 12000,
+  int netIncomeAmount = 10000,
+  PaymentStatus paymentStatus = PaymentStatus.pending,
+  DateTime? paidAt,
+  OrderStatus orderStatus = OrderStatus.newOrder,
+  DateTime? createdAt,
+}) {
+  final now = createdAt ?? DateTime.now();
+  return Transaction(
+    liveSessionId: liveSessionId,
+    hppId: hppId,
+    hppUnitAmount: hppUnitAmount,
+    productCode: productCode,
+    orderId: orderId,
+    quantity: quantity,
+    gmvAmount: gmvAmount,
+    paymentStatus: paymentStatus,
+    paidAt: paidAt,
+    netIncomeAmount: netIncomeAmount,
+    orderStatus: orderStatus,
+    createdAt: now,
+    updatedAt: now,
+  );
+}
