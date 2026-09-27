@@ -2,11 +2,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tiktok_seller/core/currency/rupiah.dart';
 import 'package:tiktok_seller/data/database/app_database.dart';
 import 'package:tiktok_seller/data/models/hpp_master.dart';
+import 'package:tiktok_seller/data/models/monthly_report.dart';
 import 'package:tiktok_seller/data/models/statuses.dart';
 import 'package:tiktok_seller/data/models/transaction.dart';
 import 'package:tiktok_seller/data/repositories/account_repository.dart';
 import 'package:tiktok_seller/data/repositories/hpp_repository.dart';
 import 'package:tiktok_seller/data/repositories/live_session_repository.dart';
+import 'package:tiktok_seller/data/repositories/monthly_report_repository.dart';
 import 'package:tiktok_seller/data/repositories/transaction_repository.dart';
 import 'package:tiktok_seller/features/reports/report_totals.dart';
 import 'package:tiktok_seller/features/sales/transaction_validator.dart';
@@ -187,6 +189,42 @@ void main() {
     expect(totals.netIncome, 16000);
     expect(totals.hpp, 10000);
     expect(totals.profit, 6000);
+  });
+  test('account avatar path persists and can be removed', () async {
+    final account = await accounts.activeAccount();
+    if (account == null) {
+      fail("Active account missing");
+    }
+    const avatarPath = "/tmp/countcat-avatar-test.jpg";
+    await accounts.update(account.copyWith(photoPath: avatarPath));
+    var stored = await accounts.activeAccount();
+    expect(stored?.photoPath, avatarPath);
+    if (stored == null) {
+      fail("Account disappeared");
+    }
+    await accounts.update(stored.copyWith(photoPath: null));
+    stored = await accounts.activeAccount();
+    expect(stored?.photoPath, isNull);
+  });
+
+  test('monthly snapshots remain isolated by submitted local calendar month', () async {
+    final reports = MonthlyReportRepository(database);
+    await transactions.insertTransaction(_transaction(orderId: 'AUG', gmvAmount: 10000, netIncomeAmount: 8000, hppUnitAmount: 2000, createdAt: DateTime(2026, 8, 31, 23, 0)));
+    await transactions.insertTransaction(_transaction(orderId: 'SEP', gmvAmount: 20000, netIncomeAmount: 15000, hppUnitAmount: 3000, createdAt: DateTime(2026, 9, 1)));
+    Future<void> submit(int month) async { final start = DateTime(2026, month); final end = DateTime(2026, month + 1); final totals = ReportTotals.fromTransactions(await transactions.listTransactions(periodStart: start, periodEnd: end)); await reports.save(MonthlyReport(year: 2026, month: month, periodStart: start, periodEnd: end, gmvTotal: totals.gmv, netIncomeTotal: totals.netIncome, hppTotal: totals.hpp, profitTotal: totals.profit, submittedAt: DateTime.now())); }
+    await submit(8);
+    final august = (await reports.listReports()).single;
+    expect(august.gmvTotal, 10000);
+    await submit(9);
+    var snapshots = await reports.listReports();
+    expect(snapshots.where((item) => item.month == 8).single.gmvTotal, 10000);
+    expect(snapshots.where((item) => item.month == 9).single.gmvTotal, 20000);
+    await transactions.insertTransaction(_transaction(orderId: 'SEP-2', gmvAmount: 5000, netIncomeAmount: 4000, hppUnitAmount: 1000, createdAt: DateTime(2026, 9, 30, 23, 59)));
+    await submit(9);
+    snapshots = await reports.listReports();
+    expect(snapshots.where((item) => item.month == 8), hasLength(1));
+    expect(snapshots.where((item) => item.month == 9), hasLength(1));
+    expect(snapshots.where((item) => item.month == 9).single.gmvTotal, 25000);
   });
 }
 
