@@ -1,9 +1,4 @@
-import '../../widgets/placeholder_page.dart';
-
-class DashboardPage extends PlaceholderPage {
-  const DashboardPage({super.key})
-      : super(
-          title: 'Dashboard',
-          description: 'Your sales overview will appear here in a future milestone.',
-        );
-}
+import 'dart:io'; import 'package:flutter/material.dart';
+import '../../data/database/app_database.dart'; import '../../data/models/account.dart'; import '../../data/repositories/account_repository.dart';
+class DashboardPage extends StatefulWidget {const DashboardPage({super.key}); @override State<DashboardPage> createState()=>_DashboardPageState();}
+class _DashboardPageState extends State<DashboardPage>{final _repo=AccountRepository(AppDatabase.instance);List<Account> _items=[];Account? _active;bool _loading=true;Future<void> _load()async{final r=await _repo.listAccounts();final a=await _repo.activeAccount();if(mounted)setState((){_items=r;_active=a;_loading=false;});} @override void initState(){super.initState();_load();} Future<void> _create()async{final name=TextEditingController(),desc=TextEditingController();final ok=await showDialog<bool>(context:context,builder:(c)=>AlertDialog(title:const Text('Create New Account'),content:Column(mainAxisSize:MainAxisSize.min,children:[const CircleAvatar(radius:28,child:Icon(Icons.person)),TextField(controller:name,decoration:const InputDecoration(labelText:'Account name')),TextField(controller:desc,decoration:const InputDecoration(labelText:'Short description'))]),actions:[TextButton(onPressed:()=>Navigator.pop(c),child:const Text('CANCEL')),FilledButton(onPressed:()=>Navigator.pop(c,true),child:const Text('CREATE'))]));if(ok==true&&name.text.trim().isNotEmpty){await _repo.create(name:name.text.trim(),description:desc.text.trim());await _load();}} @override Widget build(BuildContext c)=>Padding(padding:const EdgeInsets.all(24),child:_loading?const Center(child:CircularProgressIndicator()):Column(crossAxisAlignment:CrossAxisAlignment.start,children:[Text('Dashboard',style:Theme.of(c).textTheme.headlineSmall),const SizedBox(height:16),Expanded(child:Scrollbar(thumbVisibility:true,interactive:true,child:ListView(children:[for(final a in _items)Card(color:a.id==_active?.id?Theme.of(c).colorScheme.secondaryContainer:null,child:ListTile(onTap:()async{await _repo.setActiveAccountId(a.id);await _load();},leading:CircleAvatar(backgroundImage:a.photoPath==null?null:FileImage(File(a.photoPath!)),child:a.photoPath==null?const Icon(Icons.person):null),title:Text(a.name),subtitle:Text(a.description))),ListTile(leading:const Icon(Icons.add),title:const Text('Create New Account'),onTap:_create)]))) ]));}
