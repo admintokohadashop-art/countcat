@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:image_picker/image_picker.dart';
-import 'package:path_provider/path_provider.dart';
+import 'countcat_data_paths.dart';
 
 class AvatarStorage {
   AvatarStorage({ImagePicker? picker}) : _picker = picker ?? ImagePicker();
@@ -35,10 +35,7 @@ class AvatarStorage {
     }
   }
 
-  Future<Directory> _avatarDirectory() async {
-    final support = await getApplicationSupportDirectory();
-    return Directory('${support.path}${Platform.pathSeparator}avatars').create(recursive: true);
-  }
+  Future<Directory> _avatarDirectory() => CountCatDataPaths.avatars();
 
   String _extension(String path) {
     final dot = path.lastIndexOf('.');

@@ -13,6 +13,8 @@ dependencies:
   sqflite_common_ffi: ^2.3.4
   image_picker: ^1.1.2
   path_provider: ^2.1.4
+  file_picker: ^8.1.2
+  archive: ^3.6.1
 
 dev_dependencies:
   flutter_test:
