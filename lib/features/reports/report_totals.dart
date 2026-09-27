@@ -1,26 +1,3 @@
-import '../../data/models/statuses.dart';
-import '../../data/models/transaction.dart';
-
-class ReportTotals {
-  const ReportTotals({required this.gmv, required this.netIncome, required this.hpp, required this.profit});
-  final int gmv;
-  final int netIncome;
-  final int hpp;
-  final int profit;
-
-  factory ReportTotals.fromTransactions(List<Transaction> transactions, int globalHpp) {
-    var gmv = 0;
-    var netIncome = 0;
-    var hpp = 0;
-    var profit = 0;
-    for (final transaction in transactions) {
-      gmv += transaction.gmvAmount;
-      if (transaction.paymentStatus == PaymentStatus.cancelled) continue;
-      final transactionHpp = globalHpp * transaction.quantity;
-      netIncome += transaction.netIncomeAmount;
-      hpp += transactionHpp;
-      profit += transaction.netIncomeAmount - transactionHpp;
-    }
-    return ReportTotals(gmv: gmv, netIncome: netIncome, hpp: hpp, profit: profit);
-  }
-}
+import '../../data/models/statuses.dart'; import '../../data/models/transaction.dart';
+class ReportTotals { const ReportTotals({required this.gmv,required this.netIncome,required this.hpp,required this.profit}); final int gmv,netIncome,hpp,profit;
+ factory ReportTotals.fromTransactions(List<Transaction> items,[int? ignoredLegacyHpp]) {var gmv=0,net=0,hpp=0,profit=0;for(final t in items){gmv+=t.gmvAmount;if(t.paymentStatus==PaymentStatus.cancelled)continue;final cost=(t.hppUnitAmount == 0 && ignoredLegacyHpp != null ? ignoredLegacyHpp : t.hppUnitAmount)*t.quantity;net+=t.netIncomeAmount;hpp+=cost;profit+=t.netIncomeAmount-cost;}return ReportTotals(gmv:gmv,netIncome:net,hpp:hpp,profit:profit);}}
