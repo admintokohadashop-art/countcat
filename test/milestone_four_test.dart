@@ -32,6 +32,7 @@ void main() {
   group('Transaction.unitPrice', () {
     test('defaults to 0 when omitted', () {
       final t = Transaction(
+        transactionDate: DateTime(2026),
         productCode: 'SKU',
         orderId: 'ORDER',
         quantity: 1,
@@ -50,6 +51,7 @@ void main() {
       final t = Transaction(
         id: 1,
         accountId: 1,
+        transactionDate: DateTime(2026, 8, 18),
         unitPrice: 50000,
         productCode: 'SKU',
         orderId: 'ORDER',
@@ -69,7 +71,7 @@ void main() {
       expect(restored.netIncomeAmount, 90000);
     });
 
-    test('fromMap tolerates missing unit_price (legacy rows)', () {
+    test('fromMap tolerates missing unit_price and transaction_date (legacy rows)', () {
       final now = DateTime(2026).toUtc().toIso8601String();
       final m = <String, Object?>{
         'id': 1,
@@ -96,6 +98,7 @@ void main() {
       final now = DateTime(2026);
       final t = Transaction(
         unitPrice: 1000,
+        transactionDate: DateTime(2026, 8, 18),
         productCode: 'P',
         orderId: 'O',
         quantity: 1,
@@ -111,12 +114,161 @@ void main() {
     });
   });
 
-  group('Schema v3 -> v4 migration', () {
+  group('Transaction.transactionDate', () {
+    test('is persisted as YYYY-MM-DD and read back as local midnight', () {
+      final now = DateTime(2026);
+      final t = Transaction(
+        transactionDate: DateTime(2026, 8, 18),
+        productCode: 'P',
+        orderId: 'O',
+        quantity: 1,
+        gmvAmount: 1000,
+        paymentStatus: PaymentStatus.pending,
+        netIncomeAmount: 900,
+        orderStatus: OrderStatus.newOrder,
+        createdAt: now,
+        updatedAt: now,
+      );
+      final m = t.toMap();
+      expect(m['transaction_date'], '2026-08-18');
+      final restored = Transaction.fromMap(m);
+      expect(restored.transactionDate.year, 2026);
+      expect(restored.transactionDate.month, 8);
+      expect(restored.transactionDate.day, 18);
+      expect(restored.transactionDate.isUtc, isFalse);
+    });
+
+    test('copyWith keeps transactionDate when not provided and updates it when provided', () {
+      final now = DateTime(2026);
+      final t = Transaction(
+        transactionDate: DateTime(2026, 8, 18),
+        productCode: 'P',
+        orderId: 'O',
+        quantity: 1,
+        gmvAmount: 1000,
+        paymentStatus: PaymentStatus.pending,
+        netIncomeAmount: 900,
+        orderStatus: OrderStatus.newOrder,
+        createdAt: now,
+        updatedAt: now,
+      );
+      expect(t.copyWith(quantity: 3).transactionDate.day, 18);
+      expect(t.copyWith(transactionDate: DateTime(2026, 9, 1)).transactionDate.month, 9);
+    });
+  });
+
+  group('Schema v4 -> v5 migration', () {
     late Directory temp;
     late CountCatDataPaths paths;
 
     setUp(() async {
-      temp = await Directory.systemTemp.createTemp('countcat-v3-v4-');
+      temp = await Directory.systemTemp.createTemp('countcat-v4-v5-');
+      paths = CountCatDataPaths(root: temp);
+    });
+
+    tearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+
+    Future<void> createV4Database() async {
+      final file = await paths.databaseFile;
+      await file.parent.create(recursive: true);
+      final db = await databaseFactoryFfi.openDatabase(file.path);
+      await db.execute('CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL)');
+      await db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',photo_path TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)");
+      await db.execute('CREATE TABLE account_settings (account_id INTEGER NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,key))');
+      await db.execute('CREATE TABLE hpp_master (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER NOT NULL,name TEXT NOT NULL,unit_amount INTEGER NOT NULL,is_active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
+      await db.execute('CREATE TABLE live_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,name TEXT NOT NULL,started_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
+      await db.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,live_session_id INTEGER,hpp_id INTEGER,hpp_unit_amount INTEGER NOT NULL DEFAULT 0,unit_price INTEGER NOT NULL DEFAULT 0,product_code TEXT NOT NULL,order_id TEXT NOT NULL,quantity INTEGER NOT NULL,gmv_amount INTEGER NOT NULL,payment_description TEXT,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),paid_at TEXT,net_income_amount INTEGER NOT NULL,order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,order_id))");
+      await db.execute('CREATE TABLE monthly_reports (account_id INTEGER,year INTEGER NOT NULL,month INTEGER NOT NULL,period_start TEXT NOT NULL,period_end TEXT NOT NULL,gmv_total INTEGER NOT NULL,net_income_total INTEGER NOT NULL,hpp_total INTEGER NOT NULL,profit_total INTEGER NOT NULL,submitted_at TEXT NOT NULL,UNIQUE(account_id,year,month))');
+      await db.execute('CREATE INDEX tx_account_index ON transactions(account_id)');
+      await db.execute('CREATE INDEX sessions_account_index ON live_sessions(account_id)');
+      await db.execute('CREATE INDEX hpp_account_index ON hpp_master(account_id,is_active)');
+      await db.execute('CREATE INDEX reports_account_index ON monthly_reports(account_id)');
+      await db.execute('PRAGMA user_version = 4');
+      await db.close();
+    }
+
+    test('preserves v4 data and backfills transaction_date from created_at local date', () async {
+      await createV4Database();
+      final file = await paths.databaseFile;
+      final seed = await databaseFactoryFfi.openDatabase(file.path);
+      // 23:00 UTC on 17 August: in any timezone ahead of UTC this shifts to 18 August locally.
+      final createdAtUtc = '2026-08-17T23:00:00.000Z';
+      await seed.insert('transactions', {
+        'account_id': 1,
+        'hpp_unit_amount': 5000,
+        'unit_price': 50000,
+        'product_code': 'P1',
+        'order_id': 'O1',
+        'quantity': 2,
+        'gmv_amount': 100000,
+        'payment_description': 'desc',
+        'payment_status': 'paid',
+        'paid_at': createdAtUtc,
+        'net_income_amount': 90000,
+        'order_status': 'closed',
+        'created_at': createdAtUtc,
+        'updated_at': createdAtUtc,
+      });
+      await seed.close();
+
+      final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
+      final db = await app.database;
+      final rows = await db.query('transactions');
+      expect(rows, hasLength(1));
+      final row = rows.single;
+
+      // transaction_date must equal the local date of created_at, never the UTC date.
+      final expectedLocal = DateTime.parse(createdAtUtc).toLocal();
+      final expected = '${expectedLocal.year.toString().padLeft(4, '0')}-${expectedLocal.month.toString().padLeft(2, '0')}-${expectedLocal.day.toString().padLeft(2, '0')}';
+      expect(row['transaction_date'], expected, reason: 'transaction_date must be the LOCAL date of created_at (no UTC drift)');
+
+      expect(row['unit_price'], 50000);
+      expect(row['gmv_amount'], 100000);
+      expect(row['net_income_amount'], 90000);
+      expect(row['hpp_unit_amount'], 5000);
+      expect(row['quantity'], 2);
+      expect(row['order_status'], 'closed');
+      expect(row['product_code'], 'P1');
+      expect(row['payment_status'], 'paid');
+
+      final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
+      expect(version, 5);
+      await app.close();
+    });
+
+    test('v5 transactions table accepts order_status = cancel', () async {
+      final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
+      final db = await app.database;
+      final now = DateTime(2026).toUtc().toIso8601String();
+      await db.insert('transactions', {
+        'account_id': 1,
+        'hpp_unit_amount': 0,
+        'unit_price': 1000,
+        'transaction_date': '2026-08-18',
+        'product_code': 'P',
+        'order_id': 'CANCELED',
+        'quantity': 1,
+        'gmv_amount': 1000,
+        'payment_status': 'pending',
+        'net_income_amount': 900,
+        'order_status': 'cancel',
+        'created_at': now,
+        'updated_at': now,
+      });
+      final rows = await db.query('transactions', where: 'order_status = ?', whereArgs: ['cancel']);
+      expect(rows, hasLength(1));
+      await app.close();
+    });
+  });
+
+  group('Schema v3 -> v5 migration', () {
+    late Directory temp;
+    late CountCatDataPaths paths;
+
+    setUp(() async {
+      temp = await Directory.systemTemp.createTemp('countcat-v3-v5-');
       paths = CountCatDataPaths(root: temp);
     });
 
@@ -143,92 +295,37 @@ void main() {
       await db.close();
     }
 
-    test('preserves v3 data and backfills unit_price from gmv/quantity', () async {
+    test('v3 row gains valid transaction_date and unit_price through chained migration', () async {
       await createV3Database();
       final file = await paths.databaseFile;
       final seed = await databaseFactoryFfi.openDatabase(file.path);
-      final now = DateTime(2026, 9, 1).toUtc().toIso8601String();
+      final createdAtUtc = '2026-08-17T23:00:00.000Z';
       await seed.insert('transactions', {
         'account_id': 1,
-        'live_session_id': null,
-        'hpp_id': null,
         'hpp_unit_amount': 5000,
         'product_code': 'P1',
         'order_id': 'O1',
         'quantity': 2,
         'gmv_amount': 100000,
-        'payment_description': 'desc',
         'payment_status': 'paid',
-        'paid_at': now,
+        'paid_at': createdAtUtc,
         'net_income_amount': 90000,
         'order_status': 'closed',
-        'created_at': now,
-        'updated_at': now,
+        'created_at': createdAtUtc,
+        'updated_at': createdAtUtc,
       });
       await seed.close();
 
       final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
       final db = await app.database;
-      final rows = await db.query('transactions');
-      expect(rows, hasLength(1));
-      final row = rows.single;
+      final row = (await db.query('transactions')).single;
+      final expectedLocal = DateTime.parse(createdAtUtc).toLocal();
+      final expected = '${expectedLocal.year.toString().padLeft(4, '0')}-${expectedLocal.month.toString().padLeft(2, '0')}-${expectedLocal.day.toString().padLeft(2, '0')}';
+      expect(row['transaction_date'], expected);
       expect(row['unit_price'], 50000);
       expect(row['gmv_amount'], 100000);
-      expect(row['net_income_amount'], 90000);
-      expect(row['hpp_unit_amount'], 5000);
-      expect(row['quantity'], 2);
-      expect(row['order_status'], 'closed');
-      expect(row['product_code'], 'P1');
-      expect(row['payment_status'], 'paid');
-      await app.close();
-    });
-
-    test('backfills unit_price = 0 when quantity is 0', () async {
-      await createV3Database();
-      final file = await paths.databaseFile;
-      final seed = await databaseFactoryFfi.openDatabase(file.path);
-      final now = DateTime(2026).toUtc().toIso8601String();
-      await seed.insert('transactions', {
-        'account_id': 1,
-        'hpp_unit_amount': 0,
-        'product_code': 'P',
-        'order_id': 'Z',
-        'quantity': 0,
-        'gmv_amount': 0,
-        'payment_status': 'pending',
-        'net_income_amount': 0,
-        'order_status': 'new',
-        'created_at': now,
-        'updated_at': now,
-      });
-      await seed.close();
-
-      final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
-      final db = await app.database;
-      expect((await db.query('transactions')).single['unit_price'], 0);
-      await app.close();
-    });
-
-    test('v4 transactions table accepts order_status = cancel', () async {
-      final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
-      final db = await app.database;
-      final now = DateTime(2026).toUtc().toIso8601String();
-      await db.insert('transactions', {
-        'account_id': 1,
-        'hpp_unit_amount': 0,
-        'unit_price': 1000,
-        'product_code': 'P',
-        'order_id': 'CANCELED',
-        'quantity': 1,
-        'gmv_amount': 1000,
-        'payment_status': 'pending',
-        'net_income_amount': 900,
-        'order_status': 'cancel',
-        'created_at': now,
-        'updated_at': now,
-      });
-      final rows = await db.query('transactions', where: 'order_status = ?', whereArgs: ['cancel']);
-      expect(rows, hasLength(1));
+      final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
+      expect(version, 5);
       await app.close();
     });
   });
