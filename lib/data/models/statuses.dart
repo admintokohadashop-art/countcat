@@ -14,7 +14,8 @@ enum OrderStatus {
   dropoff('dropoff', 'DROP OFF'),
   shipping('shipping', 'DALAM PENGIRIMAN'),
   closed('closed', 'CLOSE'),
-  returned('returned', 'RETUR');
+  returned('returned', 'RETUR'),
+  cancel('cancel', 'CANCEL');
 
   const OrderStatus(this.value, this.label);
   final String value;
