@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/currency/rupiah.dart';
 import '../../data/database/app_database.dart';
@@ -277,6 +278,21 @@ class _MonthDetailPageState extends State<MonthDetailPage> {
     _load();
   }
 
+  Future<void> _copyOrderId(String orderId) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: orderId));
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ID Pesanan disalin.')),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Gagal menyalin ID Pesanan.')),
+      );
+    }
+  }
+
   Future<void> _edit(Transaction transaction) async {
     final updated = await showDialog<Transaction>(context: context, builder: (_) => _TransactionEditDialog(transaction: transaction, sessions: _liveSessions));
     if (updated == null) return;
@@ -415,7 +431,15 @@ class _MonthDetailPageState extends State<MonthDetailPage> {
       DataCell(Text(Rupiah.format(item.unitPrice))),
       DataCell(Text(Rupiah.format(item.gmvAmount))),
       DataCell(Text(item.productCode)),
-      DataCell(Text(item.orderId)),
+      DataCell(Row(mainAxisSize: MainAxisSize.min, children: [
+        Text(item.orderId),
+        IconButton(
+          icon: const Icon(Icons.copy, size: 16),
+          tooltip: 'Copy ID Pesanan',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => _copyOrderId(item.orderId),
+        ),
+      ])),
       DataCell(Text(item.paymentDescription ?? '-')),
       DataCell(Text(item.paidAt == null ? '-' : '${item.paidAt!.day}/${item.paidAt!.month}/${item.paidAt!.year}')),
       DataCell(Text(Rupiah.format(item.netIncomeAmount))),
@@ -432,7 +456,13 @@ class _MonthDetailPageState extends State<MonthDetailPage> {
 
   Widget _filter<T>(String label, T value, List<DropdownMenuItem<T>> items, ValueChanged<T?> changed) => SizedBox(
         width: 220,
-        child: DropdownButtonFormField<T>(initialValue: value, decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()), items: items, onChanged: changed),
+        child: DropdownButtonFormField<T>(
+          initialValue: value,
+          isExpanded: true,
+          decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
+          items: items,
+          onChanged: changed,
+        ),
       );
 }
 
@@ -562,6 +592,7 @@ class _TransactionEditDialogState extends State<_TransactionEditDialog> {
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 DropdownButtonFormField<int>(
                   initialValue: _sessionId,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Live Session'),
                   items: widget.sessions.map((item) => DropdownMenuItem(value: item.id, child: Text(item.name))).toList(),
                   onChanged: (value) => setState(() => _sessionId = value),
@@ -583,6 +614,7 @@ class _TransactionEditDialogState extends State<_TransactionEditDialog> {
                 _field(_description, 'Keterangan Pembayaran', null),
                 _control(DropdownButtonFormField<PaymentStatus>(
                   initialValue: _payment,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Status Pembayaran'),
                   items: PaymentStatus.values.map((item) => DropdownMenuItem(value: item, child: Text(item.label))).toList(),
                   onChanged: (value) {
@@ -597,6 +629,7 @@ class _TransactionEditDialogState extends State<_TransactionEditDialog> {
                 )),
                 _control(DropdownButtonFormField<OrderStatus>(
                   initialValue: _orderStatus,
+                  isExpanded: true,
                   decoration: const InputDecoration(labelText: 'Status Pesanan'),
                   items: OrderStatus.values.map((item) => DropdownMenuItem(value: item, child: Text(item.label))).toList(),
                   onChanged: (value) { if (value != null) setState(() => _orderStatus = value); },
