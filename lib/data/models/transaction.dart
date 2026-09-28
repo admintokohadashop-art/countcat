@@ -17,6 +17,7 @@ class Transaction {
     required this.paymentStatus,
     this.paidAt,
     required this.netIncomeAmount,
+    this.returnShippingCompensation = 0,
     required this.orderStatus,
     required this.createdAt,
     required this.updatedAt,
@@ -24,8 +25,9 @@ class Transaction {
 
   final int? id, accountId, liveSessionId, hppId;
   final int hppUnitAmount, unitPrice, quantity, gmvAmount, netIncomeAmount;
-  /// Business date of the transaction. Always normalized to local midnight.
-  /// Persisted as a plain `YYYY-MM-DD` string to avoid any UTC/local drift.
+  /// Kompensasi ongkir retur. Satu order = satu nilai. 0 = belum diinput.
+  final int returnShippingCompensation;
+  /// Tanggal bisnis transaksi. Selalu dinormalkan ke local midnight.
   final DateTime transactionDate;
   final String productCode, orderId;
   final String? paymentDescription;
@@ -52,6 +54,7 @@ class Transaction {
         paymentStatus: PaymentStatus.fromValue(m['payment_status'] as String),
         paidAt: m['paid_at'] == null ? null : DateTime.parse(m['paid_at'] as String),
         netIncomeAmount: m['net_income_amount'] as int,
+        returnShippingCompensation: m['return_shipping_compensation'] as int? ?? 0,
         orderStatus: OrderStatus.fromValue(m['order_status'] as String),
         createdAt: DateTime.parse(m['created_at'] as String),
         updatedAt: DateTime.parse(m['updated_at'] as String),
@@ -73,6 +76,7 @@ class Transaction {
         'payment_status': paymentStatus.value,
         'paid_at': paidAt?.toIso8601String(),
         'net_income_amount': netIncomeAmount,
+        'return_shipping_compensation': returnShippingCompensation,
         'order_status': orderStatus.value,
         'created_at': createdAt.toUtc().toIso8601String(),
         'updated_at': updatedAt.toUtc().toIso8601String(),
@@ -94,6 +98,7 @@ class Transaction {
     PaymentStatus? paymentStatus,
     Object? paidAt = _unset,
     int? netIncomeAmount,
+    int? returnShippingCompensation,
     OrderStatus? orderStatus,
     DateTime? createdAt,
     DateTime? updatedAt,
@@ -114,12 +119,12 @@ class Transaction {
         paymentStatus: paymentStatus ?? this.paymentStatus,
         paidAt: identical(paidAt, _unset) ? this.paidAt : paidAt as DateTime?,
         netIncomeAmount: netIncomeAmount ?? this.netIncomeAmount,
+        returnShippingCompensation: returnShippingCompensation ?? this.returnShippingCompensation,
         orderStatus: orderStatus ?? this.orderStatus,
         createdAt: createdAt ?? this.createdAt,
         updatedAt: updatedAt ?? this.updatedAt,
       );
 
-  /// Formats a local DateTime as `YYYY-MM-DD`. Never uses UTC.
   static String formatLocalDate(DateTime value) =>
       '${value.year.toString().padLeft(4, '0')}-${value.month.toString().padLeft(2, '0')}-${value.day.toString().padLeft(2, '0')}';
 

@@ -14,7 +14,7 @@ class AppDatabase {
 
   static final instance = AppDatabase._();
   static const databaseName = CountCatDataPaths.databaseFilename;
-  static const _schemaVersion = 5;
+  static const _schemaVersion = 6;
   sqflite.Database? _database;
   final sqflite.DatabaseFactory? _databaseFactory;
   final String? _databasePath;
@@ -92,7 +92,7 @@ class AppDatabase {
     await d.execute('CREATE TABLE account_settings (account_id INTEGER NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,key))');
     await d.execute('CREATE TABLE hpp_master (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER NOT NULL,name TEXT NOT NULL,unit_amount INTEGER NOT NULL,is_active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
     await d.execute('CREATE TABLE live_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,name TEXT NOT NULL,started_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
-    await d.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,live_session_id INTEGER,hpp_id INTEGER,hpp_unit_amount INTEGER NOT NULL DEFAULT 0,unit_price INTEGER NOT NULL DEFAULT 0,transaction_date TEXT NOT NULL,product_code TEXT NOT NULL,order_id TEXT NOT NULL,quantity INTEGER NOT NULL,gmv_amount INTEGER NOT NULL,payment_description TEXT,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),paid_at TEXT,net_income_amount INTEGER NOT NULL,order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,order_id))");
+    await d.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,live_session_id INTEGER,hpp_id INTEGER,hpp_unit_amount INTEGER NOT NULL DEFAULT 0,unit_price INTEGER NOT NULL DEFAULT 0,transaction_date TEXT NOT NULL,product_code TEXT NOT NULL,order_id TEXT NOT NULL,quantity INTEGER NOT NULL,gmv_amount INTEGER NOT NULL,payment_description TEXT,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),paid_at TEXT,net_income_amount INTEGER NOT NULL,return_shipping_compensation INTEGER NOT NULL DEFAULT 0,order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,order_id))");
     await d.execute('CREATE TABLE monthly_reports (account_id INTEGER,year INTEGER NOT NULL,month INTEGER NOT NULL,period_start TEXT NOT NULL,period_end TEXT NOT NULL,gmv_total INTEGER NOT NULL,net_income_total INTEGER NOT NULL,hpp_total INTEGER NOT NULL,profit_total INTEGER NOT NULL,submitted_at TEXT NOT NULL,UNIQUE(account_id,year,month))');
     for (final sql in ['CREATE INDEX tx_account_index ON transactions(account_id)', 'CREATE INDEX sessions_account_index ON live_sessions(account_id)', 'CREATE INDEX hpp_account_index ON hpp_master(account_id,is_active)', 'CREATE INDEX reports_account_index ON monthly_reports(account_id)']) {
       await d.execute(sql);
@@ -101,7 +101,7 @@ class AppDatabase {
 
   Future<void> _upgrade(sqflite.Database d, int old, int _) async {
     if (old < 3) {
-      await _migrateFromLegacyToV5(d);
+      await _migrateFromLegacyToLatest(d);
       return;
     }
     if (old == 3) {
@@ -109,6 +109,9 @@ class AppDatabase {
     }
     if (old == 3 || old == 4) {
       await _migrateTransactionsV4ToV5(d);
+    }
+    if (old == 3 || old == 4 || old == 5) {
+      await _migrateTransactionsV5ToV6(d);
     }
   }
 
@@ -125,7 +128,7 @@ class AppDatabase {
     return _dateString(DateTime(local.year, local.month, local.day));
   }
 
-  Future<void> _migrateFromLegacyToV5(sqflite.Database d) async {
+  Future<void> _migrateFromLegacyToLatest(sqflite.Database d) async {
     await d.transaction((tx) async {
       for (final t in ['settings', 'live_sessions', 'transactions', 'monthly_reports']) {
         try { await tx.execute('ALTER TABLE $t RENAME TO legacy_$t'); } catch (_) {}
@@ -172,6 +175,7 @@ class AppDatabase {
             'payment_status': row['payment_status'],
             'paid_at': row['paid_at'],
             'net_income_amount': row['net_income_amount'],
+            'return_shipping_compensation': 0,
             'order_status': row['order_status'],
             'created_at': createdAtRaw,
             'updated_at': row['updated_at'],
@@ -227,6 +231,12 @@ class AppDatabase {
         });
       }
       await tx.execute('DROP TABLE legacy_transactions_v4');
+    });
+  }
+
+  Future<void> _migrateTransactionsV5ToV6(sqflite.Database d) async {
+    await d.transaction((tx) async {
+      await tx.execute('ALTER TABLE transactions ADD COLUMN return_shipping_compensation INTEGER NOT NULL DEFAULT 0');
     });
   }
 }

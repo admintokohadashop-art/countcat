@@ -13,6 +13,11 @@ class TransactionValidator {
     if (amount <= 0) return 'Harga Jual harus lebih dari 0.';
     return null;
   }
+  static String? returnShippingCompensation(int? amount) {
+    if (amount == null) return 'Kompensasi Ongkir harus berupa Rupiah valid.';
+    if (amount < 0) return 'Kompensasi Ongkir tidak boleh negatif.';
+    return null;
+  }
   static String? transactionDate(DateTime? value) => value == null ? 'Tanggal Transaksi wajib diisi.' : null;
   static String? paidAt(PaymentStatus status, DateTime? value) => status == PaymentStatus.paid && value == null ? 'Tanggal Dibayar wajib diisi.' : null;
   static DateTime? normalizePaidAt(PaymentStatus status, DateTime? value) => status == PaymentStatus.paid ? value?.toUtc() : null;

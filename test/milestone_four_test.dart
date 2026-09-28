@@ -157,12 +157,12 @@ void main() {
     });
   });
 
-  group('Schema v4 -> v5 migration', () {
+  group('Schema v4 -> v6 migration', () {
     late Directory temp;
     late CountCatDataPaths paths;
 
     setUp(() async {
-      temp = await Directory.systemTemp.createTemp('countcat-v4-v5-');
+      temp = await Directory.systemTemp.createTemp('countcat-v4-v6-');
       paths = CountCatDataPaths(root: temp);
     });
 
@@ -232,13 +232,15 @@ void main() {
       expect(row['order_status'], 'closed');
       expect(row['product_code'], 'P1');
       expect(row['payment_status'], 'paid');
+      // Milestone 5 addition: v6 backfills this column with its default.
+      expect(row['return_shipping_compensation'], 0);
 
       final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
-      expect(version, 5);
+      expect(version, 6);
       await app.close();
     });
 
-    test('v5 transactions table accepts order_status = cancel', () async {
+    test('v6 transactions table accepts order_status = cancel', () async {
       final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
       final db = await app.database;
       final now = DateTime(2026).toUtc().toIso8601String();
@@ -253,6 +255,7 @@ void main() {
         'gmv_amount': 1000,
         'payment_status': 'pending',
         'net_income_amount': 900,
+        'return_shipping_compensation': 0,
         'order_status': 'cancel',
         'created_at': now,
         'updated_at': now,
@@ -263,12 +266,12 @@ void main() {
     });
   });
 
-  group('Schema v3 -> v5 migration', () {
+  group('Schema v3 -> v6 migration', () {
     late Directory temp;
     late CountCatDataPaths paths;
 
     setUp(() async {
-      temp = await Directory.systemTemp.createTemp('countcat-v3-v5-');
+      temp = await Directory.systemTemp.createTemp('countcat-v3-v6-');
       paths = CountCatDataPaths(root: temp);
     });
 
@@ -324,8 +327,83 @@ void main() {
       expect(row['transaction_date'], expected);
       expect(row['unit_price'], 50000);
       expect(row['gmv_amount'], 100000);
+      // Milestone 5 addition: chained migration ends at v6 with this column at its default.
+      expect(row['return_shipping_compensation'], 0);
       final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
-      expect(version, 5);
+      expect(version, 6);
+      await app.close();
+    });
+  });
+
+  group('Schema v5 -> v6 migration', () {
+    late Directory temp;
+    late CountCatDataPaths paths;
+
+    setUp(() async {
+      temp = await Directory.systemTemp.createTemp('countcat-v5-v6-');
+      paths = CountCatDataPaths(root: temp);
+    });
+
+    tearDown(() async {
+      if (await temp.exists()) await temp.delete(recursive: true);
+    });
+
+    Future<void> createV5Database() async {
+      final file = await paths.databaseFile;
+      await file.parent.create(recursive: true);
+      final db = await databaseFactoryFfi.openDatabase(file.path);
+      await db.execute('CREATE TABLE settings (key TEXT PRIMARY KEY,value TEXT NOT NULL,updated_at TEXT NOT NULL)');
+      await db.execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL,description TEXT NOT NULL DEFAULT '',photo_path TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)");
+      await db.execute('CREATE TABLE account_settings (account_id INTEGER NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,key))');
+      await db.execute('CREATE TABLE hpp_master (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER NOT NULL,name TEXT NOT NULL,unit_amount INTEGER NOT NULL,is_active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
+      await db.execute('CREATE TABLE live_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,name TEXT NOT NULL,started_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
+      await db.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,live_session_id INTEGER,hpp_id INTEGER,hpp_unit_amount INTEGER NOT NULL DEFAULT 0,unit_price INTEGER NOT NULL DEFAULT 0,transaction_date TEXT NOT NULL,product_code TEXT NOT NULL,order_id TEXT NOT NULL,quantity INTEGER NOT NULL,gmv_amount INTEGER NOT NULL,payment_description TEXT,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),paid_at TEXT,net_income_amount INTEGER NOT NULL,order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,order_id))");
+      await db.execute('CREATE TABLE monthly_reports (account_id INTEGER,year INTEGER NOT NULL,month INTEGER NOT NULL,period_start TEXT NOT NULL,period_end TEXT NOT NULL,gmv_total INTEGER NOT NULL,net_income_total INTEGER NOT NULL,hpp_total INTEGER NOT NULL,profit_total INTEGER NOT NULL,submitted_at TEXT NOT NULL,UNIQUE(account_id,year,month))');
+      await db.execute('CREATE INDEX tx_account_index ON transactions(account_id)');
+      await db.execute('CREATE INDEX sessions_account_index ON live_sessions(account_id)');
+      await db.execute('CREATE INDEX hpp_account_index ON hpp_master(account_id,is_active)');
+      await db.execute('CREATE INDEX reports_account_index ON monthly_reports(account_id)');
+      await db.execute('PRAGMA user_version = 5');
+      final now = DateTime(2026, 8, 1).toUtc().toIso8601String();
+      await db.insert('transactions', {
+        'account_id': 1,
+        'hpp_unit_amount': 5000,
+        'unit_price': 50000,
+        'transaction_date': '2026-08-18',
+        'product_code': 'P1',
+        'order_id': 'O1',
+        'quantity': 2,
+        'gmv_amount': 100000,
+        'payment_status': 'paid',
+        'paid_at': now,
+        'net_income_amount': 90000,
+        'order_status': 'closed',
+        'created_at': now,
+        'updated_at': now,
+      });
+      await db.close();
+    }
+
+    test('adds return_shipping_compensation with default 0 and preserves existing rows', () async {
+      await createV5Database();
+
+      final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
+      final db = await app.database;
+      final rows = await db.query('transactions');
+      expect(rows, hasLength(1));
+      final row = rows.single;
+      expect(row['return_shipping_compensation'], 0);
+      expect(row['unit_price'], 50000);
+      expect(row['gmv_amount'], 100000);
+      expect(row['net_income_amount'], 90000);
+      expect(row['hpp_unit_amount'], 5000);
+      expect(row['quantity'], 2);
+      expect(row['order_status'], 'closed');
+      expect(row['product_code'], 'P1');
+      expect(row['payment_status'], 'paid');
+      expect(row['transaction_date'], '2026-08-18');
+      final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
+      expect(version, 6);
       await app.close();
     });
   });
