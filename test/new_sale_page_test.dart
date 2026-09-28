@@ -80,9 +80,6 @@ HppMaster _hpp({int id = 10, int amount = 20000, String name = 'Cardigan'}) {
   return HppMaster(id: id, accountId: 1, name: name, unitAmount: amount, isActive: true, createdAt: now, updatedAt: now);
 }
 
-/// Pumps NewSalePage with a viewport large enough that every form field is
-/// laid out (and therefore has an element) without any scroll manipulation.
-/// The physical size is restored on teardown via [TestFlutterView.reset].
 Future<void> _pumpPage(
   WidgetTester tester, {
   required _FakeHppRepository hppRepo,
@@ -111,18 +108,7 @@ Future<void> _enter(WidgetTester tester, String label, String text) async {
   await tester.pump();
 }
 
-/// Drives a [DropdownButtonFormField] to a new value without opening the menu.
-///
-/// `FormFieldState.didChange(value)` is the public Flutter API that the
-/// dropdown invokes internally when the user picks an item: it updates the
-/// field state AND calls `widget.onChanged(value)`. Using it keeps the test
-/// deterministic and free of any frame-timing or duration pumping, while
-/// still exercising the same callback path that a real selection would.
-Future<void> _selectField<T>(
-  WidgetTester tester,
-  String label,
-  T value,
-) async {
+Future<void> _selectField<T>(WidgetTester tester, String label, T value) async {
   final finder = find
       .ancestor(
         of: find.text(label),
@@ -143,17 +129,10 @@ Future<void> _submit(WidgetTester tester) async {
   await tester.pump();
 }
 
-/// Finds the [InputDecorator] whose decoration label is [label]. Used for the
-/// read-only GMV and Profit displays; more robust than widgetWithText, which
-/// depends on the internal label rendering.
 Finder _readOnlyField(String label) => find.byWidgetPredicate(
       (w) => w is InputDecorator && w.decoration.labelText == label,
     );
 
-/// Finds the [TextFormField] whose InputDecoration label is [label], then
-/// returns the subtree of that field. Used to scope assertions to the inline
-/// validation error rendered inside the field, so that identical text
-/// displayed elsewhere (e.g. a SnackBar) is not counted.
 Finder _textFormFieldByLabel(String label) => find.ancestor(
       of: find.text(label),
       matching: find.byType(TextFormField),
@@ -197,15 +176,9 @@ void main() {
     await _pumpPage(tester, hppRepo: _FakeHppRepository([_hpp()]), txRepo: _FakeTransactionRepository());
     await _enter(tester, 'Income', '46000');
     await _enter(tester, 'Qty', '2');
-    // Scope to the Profit read-only field: GMV also reads Rp0 here because
-    // Harga Jual has not been entered yet, so a bare find.text('Rp0') would
-    // match both fields.
     final profitField = _readOnlyField('Profit');
     expect(profitField, findsOneWidget);
-    expect(
-      find.descendant(of: profitField, matching: find.text('Rp0')),
-      findsOneWidget,
-    );
+    expect(find.descendant(of: profitField, matching: find.text('Rp0')), findsOneWidget);
   });
 
   testWidgets('Profit recomputes when Income changes (HPP selected)', (tester) async {
@@ -274,10 +247,7 @@ void main() {
     // inline error rendered inside the Harga Jual field.
     final hargaJualField = _textFormFieldByLabel('Harga Jual');
     expect(hargaJualField, findsOneWidget);
-    expect(
-      find.descendant(of: hargaJualField, matching: find.text('Harga Jual harus lebih dari 0.')),
-      findsOneWidget,
-    );
+    expect(find.descendant(of: hargaJualField, matching: find.text('Harga Jual harus lebih dari 0.')), findsOneWidget);
   });
 
   testWidgets('missing HPP blocks submit', (tester) async {
@@ -312,15 +282,36 @@ void main() {
     expect(inserted.hppUnitAmount, 20000);
   });
 
+  testWidgets('Tanggal Transaksi defaults to today and is submitted', (tester) async {
+    final txRepo = _FakeTransactionRepository();
+    await _pumpPage(tester, hppRepo: _FakeHppRepository([_hpp()]), txRepo: txRepo);
+    expect(find.text('Tanggal Transaksi'), findsOneWidget);
+    await _enter(tester, 'Kode Barang', 'SKU');
+    await _enter(tester, 'ID Pesanan', 'ORD');
+    await _enter(tester, 'Qty', '1');
+    await _enter(tester, 'Harga Jual', '50000');
+    await _enter(tester, 'Income', '46000');
+    await _selectField<int>(tester, 'HPP', 10);
+    await _submit(tester);
+    final inserted = txRepo.lastInserted;
+    expect(inserted, isNotNull);
+    final now = DateTime.now();
+    expect(inserted!.transactionDate.year, now.year);
+    expect(inserted.transactionDate.month, now.month);
+    expect(inserted.transactionDate.day, now.day);
+  });
+
   testWidgets('paid-date button is disabled for pending and enabled for paid', (tester) async {
     await _pumpPage(tester, hppRepo: _FakeHppRepository([_hpp()]), txRepo: _FakeTransactionRepository());
-    final pilihFinder = find.widgetWithText(OutlinedButton, 'PILIH');
+    // Two "PILIH" buttons now exist (transaction date and paid date); the paid
+    // date one is rendered last in the ListView.
+    final pilihFinder = find.widgetWithText(OutlinedButton, 'PILIH').last;
     expect(pilihFinder, findsOneWidget);
     var button = tester.widget<OutlinedButton>(pilihFinder);
     expect(button.onPressed, isNull);
 
     await _selectField<PaymentStatus>(tester, 'Status Pembayaran', PaymentStatus.paid);
-    button = tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'PILIH'));
+    button = tester.widget<OutlinedButton>(find.widgetWithText(OutlinedButton, 'PILIH').last);
     expect(button.onPressed, isNotNull);
   });
 

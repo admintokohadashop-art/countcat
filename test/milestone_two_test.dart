@@ -190,6 +190,38 @@ void main() {
     expect(totals.hpp, 10000);
     expect(totals.profit, 6000);
   });
+
+  test('excludes returned and cancel order status from active totals but keeps GMV', () async {
+    await transactions.insertTransaction(_transaction(
+      orderId: 'ACTIVE',
+      quantity: 2,
+      gmvAmount: 20000,
+      netIncomeAmount: 16000,
+      hppUnitAmount: 5000,
+    ));
+    await transactions.insertTransaction(_transaction(
+      orderId: 'RET',
+      quantity: 1,
+      gmvAmount: 12000,
+      netIncomeAmount: 10000,
+      hppUnitAmount: 4000,
+      orderStatus: OrderStatus.returned,
+    ));
+    await transactions.insertTransaction(_transaction(
+      orderId: 'CAN',
+      quantity: 1,
+      gmvAmount: 8000,
+      netIncomeAmount: 6000,
+      hppUnitAmount: 3000,
+      orderStatus: OrderStatus.cancel,
+    ));
+    final totals = ReportTotals.fromTransactions(await transactions.listTransactions());
+    expect(totals.gmv, 40000);
+    expect(totals.netIncome, 16000);
+    expect(totals.hpp, 10000);
+    expect(totals.profit, 6000);
+  });
+
   test('account avatar path persists and can be removed', () async {
     final account = await accounts.activeAccount();
     if (account == null) {
@@ -250,8 +282,11 @@ Transaction _transaction({
   DateTime? paidAt,
   OrderStatus orderStatus = OrderStatus.newOrder,
   DateTime? createdAt,
+  DateTime? transactionDate,
 }) {
   final now = createdAt ?? DateTime.now();
+  final local = now.toLocal();
+  final txDate = transactionDate ?? DateTime(local.year, local.month, local.day);
   return Transaction(
     liveSessionId: liveSessionId,
     hppId: hppId,
@@ -260,6 +295,7 @@ Transaction _transaction({
     orderId: orderId,
     quantity: quantity,
     gmvAmount: gmvAmount,
+    transactionDate: txDate,
     paymentStatus: paymentStatus,
     paidAt: paidAt,
     netIncomeAmount: netIncomeAmount,

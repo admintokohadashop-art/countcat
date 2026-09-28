@@ -15,6 +15,9 @@ class TransactionRepository {
   final AppDatabase _database;
   Future<int?> _activeId() async => (await AccountRepository(_database).activeAccount())?.id;
 
+  static String _dateString(DateTime d) =>
+      '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
   Future<int> insertTransaction(Transaction transaction) async {
     try {
       final database = await _database.database;
@@ -40,8 +43,8 @@ class TransactionRepository {
     if (liveSessionId != null) { clauses.add('live_session_id = ?'); arguments.add(liveSessionId); }
     if (paymentStatus != null) { clauses.add('payment_status = ?'); arguments.add(paymentStatus.value); }
     if (orderStatus != null) { clauses.add('order_status = ?'); arguments.add(orderStatus.value); }
-    if (periodStart != null) { clauses.add('created_at >= ?'); arguments.add(periodStart.toUtc().toIso8601String()); }
-    if (periodEnd != null) { clauses.add('created_at < ?'); arguments.add(periodEnd.toUtc().toIso8601String()); }
+    if (periodStart != null) { clauses.add('transaction_date >= ?'); arguments.add(_dateString(periodStart)); }
+    if (periodEnd != null) { clauses.add('transaction_date < ?'); arguments.add(_dateString(periodEnd)); }
     final database = await _database.database;
     final rows = await database.query('transactions', where: clauses.isEmpty ? null : clauses.join(' AND '), whereArgs: arguments, orderBy: 'created_at DESC, id DESC');
     return rows.map(Transaction.fromMap).toList();

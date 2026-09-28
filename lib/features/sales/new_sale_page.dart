@@ -12,6 +12,11 @@ import '../../data/repositories/live_session_repository.dart';
 import '../../data/repositories/transaction_repository.dart';
 import 'transaction_validator.dart';
 
+DateTime _todayLocalDate() {
+  final now = DateTime.now();
+  return DateTime(now.year, now.month, now.day);
+}
+
 class NewSalePage extends StatefulWidget {
   const NewSalePage({
     super.key,
@@ -50,6 +55,7 @@ class _NewSalePageState extends State<NewSalePage> {
   int? _hppId;
   var _payment = PaymentStatus.pending;
   var _orderStatus = OrderStatus.newOrder;
+  DateTime _transactionDate = _todayLocalDate();
   DateTime? _paidAt;
   var _loading = true;
   var _saving = false;
@@ -107,6 +113,18 @@ class _NewSalePageState extends State<NewSalePage> {
     return _incomeValue - (hpp.unitAmount * _qtyValue);
   }
 
+  Future<void> _pickTransactionDate() async {
+    final selected = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      initialDate: _transactionDate,
+    );
+    if (selected != null && mounted) {
+      setState(() => _transactionDate = DateTime(selected.year, selected.month, selected.day));
+    }
+  }
+
   Future<void> _pickPaidDate() async {
     final selected = await showDatePicker(context: context, firstDate: DateTime(2000), lastDate: DateTime(2100), initialDate: _paidAt ?? DateTime.now());
     if (selected != null && mounted) setState(() => _paidAt = selected);
@@ -135,6 +153,7 @@ class _NewSalePageState extends State<NewSalePage> {
       hppId: selectedHpp.id,
       hppUnitAmount: selectedHpp.unitAmount,
       unitPrice: unitPrice!,
+      transactionDate: DateTime(_transactionDate.year, _transactionDate.month, _transactionDate.day),
       productCode: _product.text.trim(),
       orderId: _order.text.trim(),
       quantity: qty,
@@ -159,6 +178,7 @@ class _NewSalePageState extends State<NewSalePage> {
       setState(() {
         _payment = PaymentStatus.pending;
         _orderStatus = OrderStatus.newOrder;
+        _transactionDate = _todayLocalDate();
         _paidAt = null;
         _saving = false;
       });
@@ -206,6 +226,12 @@ class _NewSalePageState extends State<NewSalePage> {
         ),
         _field(_product, 'Kode Barang', TransactionValidator.productCode),
         _field(_order, 'ID Pesanan', TransactionValidator.orderId),
+        _control(ListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('Tanggal Transaksi'),
+          subtitle: Text('${_transactionDate.day}/${_transactionDate.month}/${_transactionDate.year}'),
+          trailing: OutlinedButton(onPressed: _pickTransactionDate, child: const Text('PILIH')),
+        )),
         _field(_qty, 'Qty', TransactionValidator.quantity, number: true),
         _field(_unitPrice, 'Harga Jual', (value) => TransactionValidator.unitPrice(Rupiah.parse(value ?? '')), number: true),
         _readOnlyValue('GMV', Rupiah.format(_gmvValue)),
