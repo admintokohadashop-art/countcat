@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:tiktok_seller/data/models/account.dart';
+import 'package:tiktok_seller/data/models/statuses.dart';
+import 'package:tiktok_seller/data/models/transaction.dart';
 import 'package:tiktok_seller/data/repositories/account_repository.dart';
+import 'package:tiktok_seller/data/repositories/transaction_repository.dart';
 import 'package:tiktok_seller/features/dashboard/dashboard_page.dart';
 
 class _FakeAccountRepository implements AccountRepository {
@@ -27,17 +30,37 @@ class _FakeAccountRepository implements AccountRepository {
   Future<void> update(Account account) async {}
 }
 
+class _FakeTransactionRepository implements TransactionRepository {
+  @override
+  Future<int> insertTransaction(Transaction transaction) async => 1;
+
+  @override
+  Future<List<Transaction>> listTransactions({
+    String search = '',
+    int? liveSessionId,
+    PaymentStatus? paymentStatus,
+    OrderStatus? orderStatus,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async => const [];
+
+  @override
+  Future<void> deleteTransaction(int id) async {}
+
+  @override
+  Future<void> updateTransaction(Transaction transaction) async {}
+}
+
 void main() {
   testWidgets('shows the account-selector dashboard initially', (tester) async {
     final repository = _FakeAccountRepository();
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: Scaffold(
-          body: DashboardPage(repository: repository),
-        ),
+    await tester.pumpWidget(MaterialApp(
+      home: DashboardPage(
+        repository: repository,
+        transactionRepository: _FakeTransactionRepository(),
       ),
-    );
+    ));
     await tester.pump();
     await tester.pump();
 
