@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../features/dashboard/dashboard_page.dart';
 import '../features/reports/reports_page.dart';
+import '../features/returns/returns_page.dart';
 import '../features/sales/new_sale_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/sessions/live_sessions_page.dart';
@@ -44,6 +45,12 @@ class TikTokSellerApp extends StatelessWidget {
             icon: Icons.assessment_outlined,
             selectedIcon: Icons.assessment,
             page: ReportsPage(),
+          ),
+          AppDestination(
+            label: 'Retur',
+            icon: Icons.assignment_return_outlined,
+            selectedIcon: Icons.assignment_return,
+            page: ReturnsPage(),
           ),
           AppDestination(
             label: 'Settings',
