@@ -17,8 +17,6 @@ import 'package:tiktok_seller/features/reports/report_totals.dart';
 import 'package:tiktok_seller/features/reports/reports_page.dart';
 import 'package:tiktok_seller/features/returns/returns_page.dart';
 
-// ─────────────────────────── helpers ───────────────────────────
-
 Transaction _tx({
   required DateTime transactionDate,
   String orderId = 'O',
@@ -67,6 +65,8 @@ class _FakeAccountRepository implements AccountRepository {
   Future<Account> create({required String name, String description = '', String? photoPath}) async => throw UnimplementedError();
   @override
   Future<void> update(Account account) async {}
+  @override
+  Future<void> delete(Account account) async {}
 }
 
 class _FakeTransactionRepository implements TransactionRepository {
@@ -117,8 +117,6 @@ class _FakeMonthlyReportRepository implements MonthlyReportRepository {
   @override
   Future<void> save(MonthlyReport report) async {}
 }
-
-// ─────────────────────────── tests ───────────────────────────
 
 void main() {
   group('Year rollover', () {
@@ -379,7 +377,6 @@ void main() {
       final t = DashboardTotals.fromTransactions(items);
       expect(t.activeIncome, 90000);
       expect(t.activeHpp, 40000);
-      // Profit must equal activeIncome - activeHpp, NOT minus compensation.
       expect(t.profit, 50000);
       expect(t.totalCompensation, 40000);
     });
@@ -485,11 +482,11 @@ void main() {
       expect(find.text('Barang Terjual'), findsOneWidget);
       expect(find.text('5'), findsOneWidget);
       expect(find.text('GMV'), findsOneWidget);
-      expect(find.text('Rp600.000'), findsOneWidget); // 5*100000 + 2*50000
+      expect(find.text('Rp600.000'), findsOneWidget);
       expect(find.text('Income'), findsOneWidget);
       expect(find.text('Rp450.000'), findsOneWidget);
       expect(find.text('Profit'), findsOneWidget);
-      expect(find.text('Rp300.000'), findsOneWidget); // 450000 - 150000
+      expect(find.text('Rp300.000'), findsOneWidget);
       expect(find.text('Retur'), findsOneWidget);
       expect(find.text('2 barang'), findsOneWidget);
       expect(find.text('Kompensasi'), findsOneWidget);

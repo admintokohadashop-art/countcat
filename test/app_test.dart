@@ -28,6 +28,9 @@ class _FakeAccountRepository implements AccountRepository {
 
   @override
   Future<void> update(Account account) async {}
+
+  @override
+  Future<void> delete(Account account) async {}
 }
 
 class _FakeTransactionRepository implements TransactionRepository {
