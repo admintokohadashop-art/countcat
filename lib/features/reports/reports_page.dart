@@ -37,6 +37,7 @@ class ReportsPage extends StatefulWidget {
 class _ReportsPageState extends State<ReportsPage> {
   late final TransactionRepository _transactions;
   late final MonthlyReportRepository _monthlyReports;
+  final _monthsScrollController = ScrollController();
   List<ReportMonth> _months = [];
   var _loading = true;
   var _revision = 0;
@@ -47,6 +48,12 @@ class _ReportsPageState extends State<ReportsPage> {
     _transactions = widget.transactionRepository ?? TransactionRepository(AppDatabase.instance);
     _monthlyReports = widget.monthlyReportRepository ?? MonthlyReportRepository(AppDatabase.instance);
     _load();
+  }
+
+  @override
+  void dispose() {
+    _monthsScrollController.dispose();
+    super.dispose();
   }
 
   Future<void> _load() async {
@@ -100,15 +107,24 @@ class _ReportsPageState extends State<ReportsPage> {
                 Expanded(
                   child: _months.isEmpty
                       ? const Center(child: Text('Belum ada transaksi.'))
-                      : ListView(children: [
-                          for (final month in _months)
-                            _MonthCard(
-                              key: ValueKey('${month.year}-${month.month}-$_revision'),
-                              month: month,
-                              reports: _monthlyReports,
-                              onOpen: () => _openMonth(month),
-                            ),
-                        ]),
+                      : Scrollbar(
+                          key: const ValueKey('reports_months_scrollbar'),
+                          controller: _monthsScrollController,
+                          thumbVisibility: true,
+                          interactive: true,
+                          child: ListView(
+                            controller: _monthsScrollController,
+                            children: [
+                              for (final month in _months)
+                                _MonthCard(
+                                  key: ValueKey('${month.year}-${month.month}-$_revision'),
+                                  month: month,
+                                  reports: _monthlyReports,
+                                  onOpen: () => _openMonth(month),
+                                ),
+                            ],
+                          ),
+                        ),
                 ),
                 const _Footer(),
               ]),
@@ -243,6 +259,7 @@ class MonthDetailPage extends StatefulWidget {
 class _MonthDetailPageState extends State<MonthDetailPage> {
   final _search = TextEditingController();
   final _horizontalTableController = ScrollController();
+  final _verticalTableController = ScrollController();
   late final TransactionRepository _transactions;
   late final LiveSessionRepository _sessions;
   late final MonthlyReportRepository _monthlyReports;
@@ -381,7 +398,6 @@ class _MonthDetailPageState extends State<MonthDetailPage> {
   }
 
   Future<void> _submitReport() async {
-    // Submit Report is intentionally independent of UI search / filters.
     final all = await _transactions.listItemsJoined(
       periodStart: widget.month.start,
       periodEnd: widget.month.end,
@@ -405,6 +421,7 @@ class _MonthDetailPageState extends State<MonthDetailPage> {
   void dispose() {
     _search.dispose();
     _horizontalTableController.dispose();
+    _verticalTableController.dispose();
     super.dispose();
   }
 
@@ -444,30 +461,41 @@ class _MonthDetailPageState extends State<MonthDetailPage> {
                 const SizedBox(height: 16),
                 Expanded(
                   child: Scrollbar(
+                    key: const ValueKey('reports_table_horizontal_scrollbar'),
                     controller: _horizontalTableController,
                     thumbVisibility: true,
                     interactive: true,
                     child: SingleChildScrollView(
                       controller: _horizontalTableController,
                       scrollDirection: Axis.horizontal,
-                      child: DataTable(
-                        columns: const [
-                          DataColumn(label: Text('No')),
-                          DataColumn(label: Text('Qty')),
-                          DataColumn(label: Text('Harga Jual')),
-                          DataColumn(label: Text('GMV')),
-                          DataColumn(label: Text('Kode Barang')),
-                          DataColumn(label: Text('ID Pesanan')),
-                          DataColumn(label: Text('Keterangan')),
-                          DataColumn(label: Text('Dibayar Tanggal')),
-                          DataColumn(label: Text('Income')),
-                          DataColumn(label: Text('HPP')),
-                          DataColumn(label: Text('Profit')),
-                          DataColumn(label: Text('Status Pembayaran')),
-                          DataColumn(label: Text('Status Pesanan')),
-                          DataColumn(label: Text('Action')),
-                        ],
-                        rows: _buildRows(context),
+                      child: Scrollbar(
+                        key: const ValueKey('reports_table_vertical_scrollbar'),
+                        controller: _verticalTableController,
+                        thumbVisibility: true,
+                        interactive: true,
+                        child: SingleChildScrollView(
+                          controller: _verticalTableController,
+                          scrollDirection: Axis.vertical,
+                          child: DataTable(
+                            columns: const [
+                              DataColumn(label: Text('No')),
+                              DataColumn(label: Text('Qty')),
+                              DataColumn(label: Text('Harga Jual')),
+                              DataColumn(label: Text('GMV')),
+                              DataColumn(label: Text('Kode Barang')),
+                              DataColumn(label: Text('ID Pesanan')),
+                              DataColumn(label: Text('Keterangan')),
+                              DataColumn(label: Text('Dibayar Tanggal')),
+                              DataColumn(label: Text('Income')),
+                              DataColumn(label: Text('HPP')),
+                              DataColumn(label: Text('Profit')),
+                              DataColumn(label: Text('Status Pembayaran')),
+                              DataColumn(label: Text('Status Pesanan')),
+                              DataColumn(label: Text('Action')),
+                            ],
+                            rows: _buildRows(context),
+                          ),
+                        ),
                       ),
                     ),
                   ),
@@ -530,10 +558,6 @@ class _MonthDetailPageState extends State<MonthDetailPage> {
     ]);
   }
 
-  /// UI-only total row (M7-B). Every cell carries a stable ValueKey so widget
-  /// tests can read the rendered value directly via `find.byKey` without
-  /// walking the DataTable's internal widget tree (`TableRow` is not a stable
-  /// surface for finders).
   DataRow _totalDataRow(BuildContext context) {
     var qty = 0, gmv = 0, income = 0, hpp = 0, profit = 0;
     for (final v in _items) {
