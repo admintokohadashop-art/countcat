@@ -6,7 +6,7 @@ import '../../core/currency/rupiah.dart';
 import '../../core/profile/avatar_storage.dart';
 import '../../data/database/app_database.dart';
 import '../../data/models/account.dart';
-import '../../data/models/transaction.dart';
+import '../../data/models/transaction_with_order.dart';
 import '../../data/repositories/account_repository.dart';
 import '../../data/repositories/transaction_repository.dart';
 import 'dashboard_totals.dart';
@@ -31,7 +31,7 @@ class _DashboardPageState extends State<DashboardPage> {
   final _avatars = AvatarStorage();
   List<Account> _items = [];
   Account? _active;
-  DashboardTotals _totals = DashboardTotals.fromTransactions(const []);
+  DashboardTotals _totals = DashboardTotals.fromJoined(const []);
   bool _loading = true;
 
   @override
@@ -45,15 +45,15 @@ class _DashboardPageState extends State<DashboardPage> {
   Future<void> _load() async {
     final items = await _repo.listAccounts();
     final active = await _repo.activeAccount();
-    List<Transaction> transactions = const [];
+    List<TransactionWithOrder> joined = const [];
     if (active != null) {
-      transactions = await _transactions.listTransactions();
+      joined = await _transactions.listItemsJoined();
     }
     if (mounted) {
       setState(() {
         _items = items;
         _active = active;
-        _totals = DashboardTotals.fromTransactions(transactions);
+        _totals = DashboardTotals.fromJoined(joined);
         _loading = false;
       });
     }

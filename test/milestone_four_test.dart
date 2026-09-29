@@ -157,12 +157,12 @@ void main() {
     });
   });
 
-  group('Schema v4 -> v6 migration', () {
+  group('Schema v4 -> v8 migration', () {
     late Directory temp;
     late CountCatDataPaths paths;
 
     setUp(() async {
-      temp = await Directory.systemTemp.createTemp('countcat-v4-v6-');
+      temp = await Directory.systemTemp.createTemp('countcat-v4-v8-');
       paths = CountCatDataPaths(root: temp);
     });
 
@@ -193,7 +193,6 @@ void main() {
       await createV4Database();
       final file = await paths.databaseFile;
       final seed = await databaseFactoryFfi.openDatabase(file.path);
-      // 23:00 UTC on 17 August: in any timezone ahead of UTC this shifts to 18 August locally.
       final createdAtUtc = '2026-08-17T23:00:00.000Z';
       await seed.insert('transactions', {
         'account_id': 1,
@@ -219,7 +218,6 @@ void main() {
       expect(rows, hasLength(1));
       final row = rows.single;
 
-      // transaction_date must equal the local date of created_at, never the UTC date.
       final expectedLocal = DateTime.parse(createdAtUtc).toLocal();
       final expected = '${expectedLocal.year.toString().padLeft(4, '0')}-${expectedLocal.month.toString().padLeft(2, '0')}-${expectedLocal.day.toString().padLeft(2, '0')}';
       expect(row['transaction_date'], expected, reason: 'transaction_date must be the LOCAL date of created_at (no UTC drift)');
@@ -232,15 +230,14 @@ void main() {
       expect(row['order_status'], 'closed');
       expect(row['product_code'], 'P1');
       expect(row['payment_status'], 'paid');
-      // Milestone 5 addition: v6 backfills this column with its default.
       expect(row['return_shipping_compensation'], 0);
 
       final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
-      expect(version, 6);
+      expect(version, 8);
       await app.close();
     });
 
-    test('v6 transactions table accepts order_status = cancel', () async {
+    test('v8 transactions table accepts order_status = cancel', () async {
       final app = AppDatabase.forTesting(paths: paths, databaseFactory: databaseFactoryFfi);
       final db = await app.database;
       final now = DateTime(2026).toUtc().toIso8601String();
@@ -266,12 +263,12 @@ void main() {
     });
   });
 
-  group('Schema v3 -> v6 migration', () {
+  group('Schema v3 -> v8 migration', () {
     late Directory temp;
     late CountCatDataPaths paths;
 
     setUp(() async {
-      temp = await Directory.systemTemp.createTemp('countcat-v3-v6-');
+      temp = await Directory.systemTemp.createTemp('countcat-v3-v8-');
       paths = CountCatDataPaths(root: temp);
     });
 
@@ -327,20 +324,19 @@ void main() {
       expect(row['transaction_date'], expected);
       expect(row['unit_price'], 50000);
       expect(row['gmv_amount'], 100000);
-      // Milestone 5 addition: chained migration ends at v6 with this column at its default.
       expect(row['return_shipping_compensation'], 0);
       final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
-      expect(version, 6);
+      expect(version, 8);
       await app.close();
     });
   });
 
-  group('Schema v5 -> v6 migration', () {
+  group('Schema v5 -> v8 migration', () {
     late Directory temp;
     late CountCatDataPaths paths;
 
     setUp(() async {
-      temp = await Directory.systemTemp.createTemp('countcat-v5-v6-');
+      temp = await Directory.systemTemp.createTemp('countcat-v5-v8-');
       paths = CountCatDataPaths(root: temp);
     });
 
@@ -403,7 +399,7 @@ void main() {
       expect(row['payment_status'], 'paid');
       expect(row['transaction_date'], '2026-08-18');
       final version = (await db.rawQuery('PRAGMA user_version')).single.values.first as int;
-      expect(version, 6);
+      expect(version, 8);
       await app.close();
     });
   });

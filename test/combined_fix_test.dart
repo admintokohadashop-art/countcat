@@ -12,11 +12,14 @@ import 'package:tiktok_seller/data/models/live_session.dart';
 import 'package:tiktok_seller/data/models/monthly_report.dart';
 import 'package:tiktok_seller/data/models/statuses.dart';
 import 'package:tiktok_seller/data/models/transaction.dart';
+import 'package:tiktok_seller/data/models/order.dart';
+import 'package:tiktok_seller/data/models/transaction_with_order.dart';
 import 'package:tiktok_seller/data/repositories/account_repository.dart';
 import 'package:tiktok_seller/data/repositories/hpp_repository.dart';
 import 'package:tiktok_seller/data/repositories/live_session_repository.dart';
 import 'package:tiktok_seller/data/repositories/monthly_report_repository.dart';
 import 'package:tiktok_seller/data/repositories/transaction_repository.dart';
+import 'package:tiktok_seller/data/repositories/order_repository.dart';
 import 'package:tiktok_seller/features/sales/new_sale_page.dart';
 import 'package:tiktok_seller/features/settings/settings_page.dart';
 
@@ -122,6 +125,7 @@ void main() {
             liveSessionRepository: _NoopLiveSessionRepo(),
             hppRepository: _NoopHppRepo(),
             transactionRepository: _NoopTransactionRepo(),
+      orderRepository: _NoopOrderRepo(),
           ),
         ),
       ));
@@ -132,8 +136,8 @@ void main() {
       expect(scrollbar.thumbVisibility, isTrue);
       expect(scrollbar.interactive, isTrue);
       expect(scrollbar.controller, isNotNull);
-      final listView = tester.widget<ListView>(find.byType(ListView).first);
-      expect(listView.controller, same(scrollbar.controller));
+      final scrollView = tester.widget<SingleChildScrollView>(find.byType(SingleChildScrollView).first);
+      expect(scrollView.controller, same(scrollbar.controller));
     });
   });
 
@@ -273,7 +277,6 @@ void main() {
       final b = await accounts.create(name: 'B');
       await sessions.createSession(name: 'B1');
 
-      // Point the global selection at A's session explicitly.
       await sessions.setSelectedSessionId(aSession.id);
       expect(await sessions.getSelectedSessionId(), aSession.id);
 
@@ -288,7 +291,6 @@ void main() {
       expect(
         await db.query('live_sessions', where: 'account_id = ?', whereArgs: [b.id]),
         hasLength(1),
-        reason: "other account's live session must remain",
       );
     });
 
@@ -415,6 +417,12 @@ class _NoopLiveSessionRepo implements LiveSessionRepository {
   Future<void> setSelectedSessionId(int? sessionId) async {}
   @override
   Future<LiveSession?> getSelectedSession() async => null;
+  @override
+  Future<void> updateSession({required int id, required String name, required DateTime startedAt}) async {}
+  @override
+  Future<bool> hasTransactions(int sessionId) async => false;
+  @override
+  Future<void> deleteSession(int sessionId) async {}
 }
 
 class _NoopHppRepo implements HppRepository {
@@ -428,6 +436,31 @@ class _NoopHppRepo implements HppRepository {
   Future<void> update(HppMaster h) async {}
   @override
   Future<void> deactivate(int id, int accountId) async {}
+}
+
+class _NoopOrderRepo implements OrderRepository {
+  @override
+  Future<int> createWithItems(Order order, List<Transaction> items) async => 1;
+
+  @override
+  Future<int> create(Order order) async => 1;
+
+  @override
+  Future<Order?> get(int id) async => null;
+
+  @override
+  Future<List<Order>> list({
+    int? liveSessionId,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+    String search = '',
+  }) async => const [];
+
+  @override
+  Future<void> update(Order order) async {}
+
+  @override
+  Future<void> delete(int id) async {}
 }
 
 class _NoopTransactionRepo implements TransactionRepository {
@@ -446,4 +479,17 @@ class _NoopTransactionRepo implements TransactionRepository {
   Future<void> deleteTransaction(int id) async {}
   @override
   Future<void> updateTransaction(Transaction transaction) async {}
+  @override
+  Future<List<TransactionWithOrder>> listItemsJoined({
+    String search = '',
+    int? liveSessionId,
+    PaymentStatus? paymentStatus,
+    OrderStatus? orderStatus,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async => const [];
+  @override
+  Future<void> updateItem(Transaction item) async {}
+  @override
+  Future<void> deleteItem(int id) async {}
 }

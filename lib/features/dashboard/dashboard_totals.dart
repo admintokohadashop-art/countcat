@@ -1,19 +1,24 @@
+import '../../data/models/order.dart';
 import '../../data/models/statuses.dart';
 import '../../data/models/transaction.dart';
+import '../../data/models/transaction_with_order.dart';
 
-/// Lifetime summary for the active account.
+/// Lifetime summary for the active account under M7 multi-item semantics.
 ///
-/// Computed from the full transaction history (all months, all years).
-/// Never derived from `MonthlyReport` snapshots.
+/// Computed from the full transaction history (all months, all years), never
+/// from `MonthlyReport` snapshots.
 ///
-/// Active rule (identical to Milestone 4C):
+/// Active rule (identical to 4C):
 /// `paymentStatus != cancelled && orderStatus != returned && orderStatus != cancel`.
 ///
-/// - [gmv] counts every transaction (including RETURNED).
-/// - [itemsSold], [activeIncome], [activeHpp], [profit] use only active transactions.
-/// - [returnedQty] is SUM(quantity) where orderStatus == returned, regardless of paymentStatus.
-/// - [totalCompensation] is SUM(returnShippingCompensation) for the same filter.
-/// - [profit] = activeIncome - activeHpp. It does NOT subtract totalCompensation.
+/// - [gmv] counts every item (including items of RETURNED orders).
+/// - [itemsSold], [activeIncome], [activeHpp], [profit] use items whose
+///   parent order is active.
+/// - [returnedQty] sums item quantities inside returned orders.
+/// - [totalCompensation] sums `order.return_shipping_compensation` once per
+///   returned order.
+/// - [profit] = activeIncome - activeHpp. It does NOT subtract
+///   totalCompensation.
 class DashboardTotals {
   const DashboardTotals({
     required this.itemsSold,
@@ -33,27 +38,33 @@ class DashboardTotals {
   final int returnedQty;
   final int totalCompensation;
 
-  factory DashboardTotals.fromTransactions(List<Transaction> items) {
+  factory DashboardTotals.fromJoined(List<TransactionWithOrder> items) {
     var itemsSold = 0;
     var gmv = 0;
     var activeIncome = 0;
     var activeHpp = 0;
     var returnedQty = 0;
     var totalCompensation = 0;
-    for (final t in items) {
-      gmv += t.gmvAmount;
-      if (t.orderStatus == OrderStatus.returned) {
-        returnedQty += t.quantity;
-        totalCompensation += t.returnShippingCompensation;
+    final seenReturned = <String>{};
+
+    for (final v in items) {
+      final o = v.order;
+      gmv += v.item.gmvAmount;
+      if (o.orderStatus == OrderStatus.returned) {
+        returnedQty += v.item.quantity;
+        if (seenReturned.add(_key(o))) {
+          totalCompensation += o.returnShippingCompensation;
+        }
       }
-      final inactive = t.paymentStatus == PaymentStatus.cancelled ||
-          t.orderStatus == OrderStatus.returned ||
-          t.orderStatus == OrderStatus.cancel;
+      final inactive = o.paymentStatus == PaymentStatus.cancelled ||
+          o.orderStatus == OrderStatus.returned ||
+          o.orderStatus == OrderStatus.cancel;
       if (inactive) continue;
-      itemsSold += t.quantity;
-      activeIncome += t.netIncomeAmount;
-      activeHpp += t.hppUnitAmount * t.quantity;
+      itemsSold += v.item.quantity;
+      activeIncome += v.item.netIncomeAmount;
+      activeHpp += v.item.hppUnitAmount * v.item.quantity;
     }
+
     return DashboardTotals(
       itemsSold: itemsSold,
       gmv: gmv,
@@ -64,4 +75,10 @@ class DashboardTotals {
       totalCompensation: totalCompensation,
     );
   }
+
+  factory DashboardTotals.fromTransactions(List<Transaction> items) =>
+      DashboardTotals.fromJoined(items.map(TransactionWithOrder.fromTransaction).toList(growable: false));
+
+  static String _key(Order o) =>
+      o.id != null ? 'id:${o.id}' : 'k:${o.accountId}::${o.orderId}';
 }

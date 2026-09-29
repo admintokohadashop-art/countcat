@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:tiktok_seller/data/models/account.dart';
 import 'package:tiktok_seller/data/models/statuses.dart';
 import 'package:tiktok_seller/data/models/transaction.dart';
+import 'package:tiktok_seller/data/models/transaction_with_order.dart';
 import 'package:tiktok_seller/data/repositories/account_repository.dart';
 import 'package:tiktok_seller/data/repositories/transaction_repository.dart';
 import 'package:tiktok_seller/features/dashboard/dashboard_page.dart';
@@ -52,6 +53,22 @@ class _FakeTransactionRepository implements TransactionRepository {
 
   @override
   Future<void> updateTransaction(Transaction transaction) async {}
+
+  @override
+  Future<List<TransactionWithOrder>> listItemsJoined({
+    String search = '',
+    int? liveSessionId,
+    PaymentStatus? paymentStatus,
+    OrderStatus? orderStatus,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async => const [];
+
+  @override
+  Future<void> updateItem(Transaction item) async {}
+
+  @override
+  Future<void> deleteItem(int id) async {}
 }
 
 void main() {
