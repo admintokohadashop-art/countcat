@@ -1,20 +1,21 @@
+import '../../data/models/order.dart';
 import '../../data/models/statuses.dart';
 import '../../data/models/transaction.dart';
+import '../../data/models/transaction_with_order.dart';
 
-/// Aggregated figures for the RETUR report.
+/// Aggregated figures for the RETUR report under M7 multi-item semantics.
 ///
-/// [returnedCount] and [totalCompensation] count every transaction whose
-/// `orderStatus == returned`, regardless of `paymentStatus` (including
-/// `cancelled`, since OrderStatus determines the operational return status).
-///
-/// [activeIncome] and [activeHpp] follow the 4C active rule: only
-/// transactions that are not `paymentStatus.cancelled`, not
-/// `orderStatus.returned`, and not `orderStatus.cancel`.
-///
-/// [incomeAfterReturn] and [profitAfterReturn] may be negative. Do not clamp.
+/// - [returnedCount] counts unique returned orders, not item rows.
+/// - [returnedQty] sums item quantities inside returned orders.
+/// - [totalCompensation] sums `order.return_shipping_compensation` exactly
+///   once per returned order (compensation is order-level, not per item).
+/// - [activeIncome] / [activeHpp] follow the 4C active rule, applied at the
+///   parent-order level.
+/// - [incomeAfterReturn] and [profitAfterReturn] may be negative. Do not clamp.
 class ReturnTotals {
   const ReturnTotals({
     required this.returnedCount,
+    required this.returnedQty,
     required this.totalCompensation,
     required this.activeIncome,
     required this.activeHpp,
@@ -23,33 +24,41 @@ class ReturnTotals {
   });
 
   final int returnedCount;
+  final int returnedQty;
   final int totalCompensation;
   final int activeIncome;
   final int activeHpp;
   final int incomeAfterReturn;
   final int profitAfterReturn;
 
-  factory ReturnTotals.fromTransactions(List<Transaction> items) {
-    var returnedCount = 0;
+  factory ReturnTotals.fromJoined(List<TransactionWithOrder> items) {
+    var returnedQty = 0;
     var totalCompensation = 0;
     var activeIncome = 0;
     var activeHpp = 0;
-    for (final t in items) {
-      if (t.orderStatus == OrderStatus.returned) {
-        returnedCount += 1;
-        totalCompensation += t.returnShippingCompensation;
+    final seenReturned = <String>{};
+
+    for (final v in items) {
+      final o = v.order;
+      if (o.orderStatus == OrderStatus.returned) {
+        returnedQty += v.item.quantity;
+        if (seenReturned.add(_key(o))) {
+          totalCompensation += o.returnShippingCompensation;
+        }
       }
-      final inactive = t.paymentStatus == PaymentStatus.cancelled ||
-          t.orderStatus == OrderStatus.returned ||
-          t.orderStatus == OrderStatus.cancel;
+      final inactive = o.paymentStatus == PaymentStatus.cancelled ||
+          o.orderStatus == OrderStatus.returned ||
+          o.orderStatus == OrderStatus.cancel;
       if (inactive) continue;
-      activeIncome += t.netIncomeAmount;
-      activeHpp += t.hppUnitAmount * t.quantity;
+      activeIncome += v.item.netIncomeAmount;
+      activeHpp += v.item.hppUnitAmount * v.item.quantity;
     }
+
     final incomeAfterReturn = activeIncome - totalCompensation;
     final profitAfterReturn = incomeAfterReturn - activeHpp;
     return ReturnTotals(
-      returnedCount: returnedCount,
+      returnedCount: seenReturned.length,
+      returnedQty: returnedQty,
       totalCompensation: totalCompensation,
       activeIncome: activeIncome,
       activeHpp: activeHpp,
@@ -57,4 +66,10 @@ class ReturnTotals {
       profitAfterReturn: profitAfterReturn,
     );
   }
+
+  factory ReturnTotals.fromTransactions(List<Transaction> items) =>
+      ReturnTotals.fromJoined(items.map(TransactionWithOrder.fromTransaction).toList(growable: false));
+
+  static String _key(Order o) =>
+      o.id != null ? 'id:${o.id}' : 'k:${o.accountId}::${o.orderId}';
 }

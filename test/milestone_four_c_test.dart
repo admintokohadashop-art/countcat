@@ -1,233 +1,174 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tiktok_seller/data/database/app_database.dart';
-import 'package:tiktok_seller/data/models/account.dart';
-import 'package:tiktok_seller/data/models/live_session.dart';
-import 'package:tiktok_seller/data/models/monthly_report.dart';
+import 'package:tiktok_seller/data/models/order.dart';
 import 'package:tiktok_seller/data/models/statuses.dart';
 import 'package:tiktok_seller/data/models/transaction.dart';
-import 'package:tiktok_seller/data/repositories/live_session_repository.dart';
-import 'package:tiktok_seller/data/repositories/monthly_report_repository.dart';
+import 'package:tiktok_seller/data/models/transaction_with_order.dart';
+import 'package:tiktok_seller/data/repositories/order_repository.dart';
 import 'package:tiktok_seller/data/repositories/transaction_repository.dart';
-import 'package:tiktok_seller/features/reports/report_totals.dart';
-import 'package:tiktok_seller/features/reports/reports_page.dart';
+import 'package:tiktok_seller/features/returns/returns_page.dart';
+
+Order _derivedOrder(Transaction t) => Order(
+      id: t.orderFk,
+      accountId: t.accountId ?? 1,
+      orderId: t.orderId,
+      liveSessionId: t.liveSessionId,
+      transactionDate: t.transactionDate,
+      paymentStatus: t.paymentStatus,
+      orderStatus: t.orderStatus,
+      paidAt: t.paidAt,
+      returnShippingCompensation: t.returnShippingCompensation,
+      paymentDescription: t.paymentDescription,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    );
 
 class _FakeTransactionRepository implements TransactionRepository {
-  _FakeTransactionRepository([this._items = const []]);
+  _FakeTransactionRepository(this._items);
   final List<Transaction> _items;
-  Transaction? lastInserted;
+
   @override
-  Future<int> insertTransaction(Transaction transaction) async {
-    lastInserted = transaction;
-    return 1;
-  }
+  Future<int> insertTransaction(Transaction transaction) async => 1;
+
   @override
-  Future<List<Transaction>> listTransactions({String search = '', int? liveSessionId, PaymentStatus? paymentStatus, OrderStatus? orderStatus, DateTime? periodStart, DateTime? periodEnd}) async {
+  Future<List<Transaction>> listTransactions({
+    String search = '',
+    int? liveSessionId,
+    PaymentStatus? paymentStatus,
+    OrderStatus? orderStatus,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async => const [];
+
+  @override
+  Future<List<TransactionWithOrder>> listItemsJoined({
+    String search = '',
+    int? liveSessionId,
+    PaymentStatus? paymentStatus,
+    OrderStatus? orderStatus,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async {
     return _items.where((t) {
+      if (orderStatus != null && t.orderStatus != orderStatus) return false;
+      if (search.isNotEmpty && !t.orderId.contains(search) && !t.productCode.contains(search)) return false;
       if (periodStart != null && t.transactionDate.isBefore(periodStart)) return false;
       if (periodEnd != null && !t.transactionDate.isBefore(periodEnd)) return false;
       return true;
-    }).toList();
+    }).map((t) => TransactionWithOrder(item: t, order: _derivedOrder(t))).toList();
   }
+
   @override
   Future<void> deleteTransaction(int id) async {}
   @override
   Future<void> updateTransaction(Transaction transaction) async {}
+  @override
+  Future<void> updateItem(Transaction item) async {}
+  @override
+  Future<void> deleteItem(int id) async {}
 }
 
-class _FakeMonthlyReportRepository implements MonthlyReportRepository {
-  final List<MonthlyReport> _reports = [];
+class _FakeOrderRepository implements OrderRepository {
+  final List<Order> updates = [];
   @override
-  Future<List<MonthlyReport>> listReports() async => List.unmodifiable(_reports);
+  Future<int> create(Order order) async => 1;
   @override
-  Future<void> save(MonthlyReport report) async {
-    _reports.removeWhere((r) => r.year == report.year && r.month == report.month);
-    _reports.add(report);
+  Future<int> createWithItems(Order order, List<Transaction> items) async => 1;
+  @override
+  Future<Order?> get(int id) async => null;
+  @override
+  Future<List<Order>> list({int? liveSessionId, DateTime? periodStart, DateTime? periodEnd, String search = ''}) async => const [];
+  @override
+  Future<void> update(Order order) async {
+    updates.add(order);
   }
-}
-
-class _FakeLiveSessionRepository implements LiveSessionRepository {
   @override
-  Future<LiveSession> createSession({required String name, DateTime? startedAt}) async => throw UnimplementedError();
-  @override
-  Future<List<LiveSession>> listSessions() async => const [];
-  @override
-  Future<int?> getSelectedSessionId() async => null;
-  @override
-  Future<void> setSelectedSessionId(int? sessionId) async {}
-  @override
-  Future<LiveSession?> getSelectedSession() async => null;
+  Future<void> delete(int id) async {}
 }
 
 Transaction _tx({
   int id = 1,
-  required DateTime transactionDate,
-  String orderId = 'O',
-  int qty = 1,
-  int unitPrice = 1000,
-  int hppUnitAmount = 200,
-  int netIncomeAmount = 900,
-  OrderStatus orderStatus = OrderStatus.closed,
+  int? orderFk,
+  String orderId = 'O1',
+  String productCode = 'SKU',
+  DateTime? date,
+  int income = 50000,
+  int compensation = 0,
+  OrderStatus orderStatus = OrderStatus.returned,
   PaymentStatus paymentStatus = PaymentStatus.paid,
 }) {
   final now = DateTime(2026);
   return Transaction(
     id: id,
-    transactionDate: transactionDate,
-    productCode: 'P',
+    orderFk: orderFk ?? id,
+    transactionDate: date ?? DateTime(2026, 8, 20),
+    productCode: productCode,
     orderId: orderId,
-    quantity: qty,
-    unitPrice: unitPrice,
-    gmvAmount: unitPrice * qty,
-    hppUnitAmount: hppUnitAmount,
-    netIncomeAmount: netIncomeAmount,
+    quantity: 1,
+    gmvAmount: 50000,
+    netIncomeAmount: income,
+    hppUnitAmount: 20000,
+    returnShippingCompensation: compensation,
     orderStatus: orderStatus,
     paymentStatus: paymentStatus,
-    paidAt: paymentStatus == PaymentStatus.paid ? now : null,
     createdAt: now,
     updatedAt: now,
   );
 }
 
-void main() {
-  group('ReportTotals — Milestone 4C rules', () {
-    test('active transaction contributes to all totals', () {
-      final t = _tx(transactionDate: DateTime(2026, 8, 1));
-      final r = ReportTotals.fromTransactions([t]);
-      expect(r.gmv, 1000);
-      expect(r.netIncome, 900);
-      expect(r.hpp, 200);
-      expect(r.profit, 700);
-    });
+Future<void> _pump(WidgetTester tester, List<Transaction> items) async {
+  tester.view.physicalSize = const Size(1200, 2000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
 
-    test('returned (order) keeps GMV but excludes Income/HPP/Profit', () {
-      final t = _tx(transactionDate: DateTime(2026, 8, 1), orderStatus: OrderStatus.returned);
-      final r = ReportTotals.fromTransactions([t]);
-      expect(r.gmv, 1000);
-      expect(r.netIncome, 0);
-      expect(r.hpp, 0);
-      expect(r.profit, 0);
-    });
-
-    test('cancel (order) keeps GMV but excludes Income/HPP/Profit', () {
-      final t = _tx(transactionDate: DateTime(2026, 8, 1), orderStatus: OrderStatus.cancel);
-      final r = ReportTotals.fromTransactions([t]);
-      expect(r.gmv, 1000);
-      expect(r.netIncome, 0);
-      expect(r.hpp, 0);
-      expect(r.profit, 0);
-    });
-
-    test('cancelled (payment) keeps GMV but excludes Income/HPP/Profit', () {
-      final t = _tx(transactionDate: DateTime(2026, 8, 1), paymentStatus: PaymentStatus.cancelled);
-      final r = ReportTotals.fromTransactions([t]);
-      expect(r.gmv, 1000);
-      expect(r.netIncome, 0);
-      expect(r.hpp, 0);
-      expect(r.profit, 0);
-    });
-
-    test('mix: GMV from all rows, income/hpp/profit only from active rows', () {
-      final active = _tx(id: 1, transactionDate: DateTime(2026, 8, 1));
-      final ret = _tx(id: 2, transactionDate: DateTime(2026, 8, 2), orderStatus: OrderStatus.returned);
-      final can = _tx(id: 3, transactionDate: DateTime(2026, 8, 3), orderStatus: OrderStatus.cancel);
-      final cancelPay = _tx(id: 4, transactionDate: DateTime(2026, 8, 4), paymentStatus: PaymentStatus.cancelled);
-      final r = ReportTotals.fromTransactions([active, ret, can, cancelPay]);
-      expect(r.gmv, 4000);
-      expect(r.netIncome, 900);
-      expect(r.hpp, 200);
-      expect(r.profit, 700);
-    });
-
-    test('profit = income - (hpp snapshot × qty)', () {
-      final t = _tx(transactionDate: DateTime(2026, 8, 1), qty: 3, unitPrice: 5000, hppUnitAmount: 2000, netIncomeAmount: 12000);
-      final r = ReportTotals.fromTransactions([t]);
-      expect(r.profit, 12000 - (2000 * 3));
-    });
-  });
-
-  group('ReportsPage grouping by transactionDate', () {
-    Future<void> pumpPage(WidgetTester tester, _FakeTransactionRepository tx, _FakeMonthlyReportRepository monthly) async {
-      tester.view.physicalSize = const Size(1200, 1800);
-      tester.view.devicePixelRatio = 1.0;
-      addTearDown(tester.view.reset);
-      await tester.pumpWidget(MaterialApp(
-        home: Scaffold(
-          body: ReportsPage(
-            transactionRepository: tx,
-            monthlyReportRepository: monthly,
-            liveSessionRepository: _FakeLiveSessionRepository(),
-          ),
-        ),
-      ));
-      await tester.pump();
-      await tester.pump();
-    }
-
-    testWidgets('groups by transactionDate, not createdAt, in DESC order', (tester) async {
-      final tx = _FakeTransactionRepository([
-        _tx(id: 1, transactionDate: DateTime(2026, 8, 18), orderId: 'A'),
-        _tx(id: 2, transactionDate: DateTime(2026, 9, 15), orderId: 'B'),
-      ]);
-      await pumpPage(tester, tx, _FakeMonthlyReportRepository());
-      expect(find.text('AGUSTUS 2026'), findsOneWidget);
-      expect(find.text('SEPTEMBER 2026'), findsOneWidget);
-      final sepY = tester.getTopLeft(find.text('SEPTEMBER 2026')).dy;
-      final augY = tester.getTopLeft(find.text('AGUSTUS 2026')).dy;
-      expect(sepY, lessThan(augY));
-    });
-
-    testWidgets('does not add current month placeholder when there are no transactions', (tester) async {
-      final tx = _FakeTransactionRepository(const []);
-      await pumpPage(tester, tx, _FakeMonthlyReportRepository());
-      expect(find.text('Belum ada transaksi.'), findsOneWidget);
-      final now = DateTime.now();
-      final monthLabel = '${_monthNames[now.month - 1]} ${now.year}'.toUpperCase();
-      expect(find.text(monthLabel), findsNothing);
-    });
-  });
-
-  group('Monthly snapshot immutability', () {
-    test('snapshot does not change when transactions change until resubmit', () async {
-      final tx = _FakeTransactionRepository([
-        _tx(id: 1, transactionDate: DateTime(2026, 8, 1)),
-      ]);
-      final monthly = _FakeMonthlyReportRepository();
-
-      // First submit
-      final first = ReportTotals.fromTransactions(await tx.listTransactions(periodStart: DateTime(2026, 8), periodEnd: DateTime(2026, 9)));
-      await monthly.save(MonthlyReport(year: 2026, month: 8, periodStart: DateTime(2026, 8), periodEnd: DateTime(2026, 9), gmvTotal: first.gmv, netIncomeTotal: first.netIncome, hppTotal: first.hpp, profitTotal: first.profit, submittedAt: DateTime.now()));
-
-      // Mutate source
-      final updated = _tx(id: 1, transactionDate: DateTime(2026, 8, 1), orderStatus: OrderStatus.returned);
-      final updatedRepo = _FakeTransactionRepository([updated]);
-      final after = ReportTotals.fromTransactions(await updatedRepo.listTransactions(periodStart: DateTime(2026, 8), periodEnd: DateTime(2026, 9)));
-      expect(after.netIncome, 0);
-
-      // Snapshot is unchanged
-      var snapshot = (await monthly.listReports()).single;
-      expect(snapshot.netIncomeTotal, 900);
-
-      // Resubmit replaces the snapshot
-      await monthly.save(MonthlyReport(year: 2026, month: 8, periodStart: DateTime(2026, 8), periodEnd: DateTime(2026, 9), gmvTotal: after.gmv, netIncomeTotal: after.netIncome, hppTotal: after.hpp, profitTotal: after.profit, submittedAt: DateTime.now()));
-      snapshot = (await monthly.listReports()).single;
-      expect(snapshot.netIncomeTotal, 0);
-      expect(snapshot.gmvTotal, 1000);
-    });
-  });
-
-  group('Account model used by test doubles', () {
-    test('Account can be constructed without a database', () {
-      final now = DateTime(2026);
-      final a = Account(id: 1, name: 'N', description: '', createdAt: now, updatedAt: now);
-      expect(a.id, 1);
-    });
-  });
-
-  test('AppDatabase.inMemoryForTesting does not need real plugins', () {
-    final db = AppDatabase.inMemoryForTesting();
-    expect(db, isNotNull);
-  });
+  final repo = _FakeTransactionRepository(items);
+  final orders = _FakeOrderRepository();
+  await tester.pumpWidget(MaterialApp(
+    home: Scaffold(body: ReturnsPage(transactionRepository: repo, orderRepository: orders)),
+  ));
+  await tester.pump();
+  await tester.pump();
 }
 
-const _monthNames = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
+Future<void> _search(WidgetTester tester, String query) async {
+  await tester.enterText(find.widgetWithText(TextField, 'Cari ID Pesanan'), query);
+  await tester.tap(find.text('SEARCH'));
+  await tester.pump();
+  await tester.pump();
+}
+
+Future<void> _selectPeriod(WidgetTester tester, ReturnPeriod? period) async {
+  final finder = find.byType(DropdownButtonFormField<ReturnPeriod?>);
+  final state = tester.state<FormFieldState<ReturnPeriod?>>(finder);
+  state.didChange(period);
+  await tester.pump();
+}
+
+void main() {
+  testWidgets('empty state when there are no returns', (tester) async {
+    await _pump(tester, [_tx(orderStatus: OrderStatus.closed)]);
+    expect(find.text('Belum ada paket retur periode ini.'), findsOneWidget);
+  });
+
+  testWidgets('period filter shows only the selected month', (tester) async {
+    await _pump(tester, [
+      _tx(id: 1, orderFk: 1, orderId: 'AUG-1', date: DateTime(2026, 8, 5), orderStatus: OrderStatus.returned),
+      _tx(id: 2, orderFk: 2, orderId: 'SEP-1', date: DateTime(2026, 9, 5), orderStatus: OrderStatus.returned),
+    ]);
+    await _selectPeriod(tester, const ReturnPeriod(2026, 9));
+    expect(find.text('ID Pesanan: SEP-1'), findsOneWidget);
+    expect(find.text('ID Pesanan: AUG-1'), findsNothing);
+  });
+
+  testWidgets('search ignores period filter', (tester) async {
+    await _pump(tester, [
+      _tx(id: 1, orderFk: 1, orderId: 'AUG-RET', date: DateTime(2026, 8, 5), orderStatus: OrderStatus.returned),
+      _tx(id: 2, orderFk: 2, orderId: 'SEP-RET', date: DateTime(2026, 9, 5), orderStatus: OrderStatus.returned),
+    ]);
+    await _selectPeriod(tester, const ReturnPeriod(2026, 8));
+    expect(find.text('ID Pesanan: AUG-RET'), findsOneWidget);
+    expect(find.text('ID Pesanan: SEP-RET'), findsNothing);
+    await _search(tester, 'SEP-RET');
+    expect(find.text('ID Pesanan: SEP-RET'), findsWidgets);
+  });
+}

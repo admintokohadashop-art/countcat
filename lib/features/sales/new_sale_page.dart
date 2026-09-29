@@ -2,13 +2,15 @@ import 'package:flutter/material.dart';
 
 import '../../core/currency/rupiah.dart';
 import '../../data/database/app_database.dart';
-import '../../data/models/live_session.dart';
 import '../../data/models/hpp_master.dart';
-import '../../data/repositories/account_repository.dart';
-import '../../data/repositories/hpp_repository.dart';
+import '../../data/models/live_session.dart';
+import '../../data/models/order.dart';
 import '../../data/models/statuses.dart';
 import '../../data/models/transaction.dart';
+import '../../data/repositories/account_repository.dart';
+import '../../data/repositories/hpp_repository.dart';
 import '../../data/repositories/live_session_repository.dart';
+import '../../data/repositories/order_repository.dart';
 import '../../data/repositories/transaction_repository.dart';
 import 'transaction_validator.dart';
 
@@ -24,36 +26,80 @@ class NewSalePage extends StatefulWidget {
     this.liveSessionRepository,
     this.hppRepository,
     this.transactionRepository,
+    this.orderRepository,
   });
 
   final AccountRepository? accountRepository;
   final LiveSessionRepository? liveSessionRepository;
   final HppRepository? hppRepository;
+
+  /// Kept for backward compatibility with earlier milestones. The Phase D
+  /// submission path goes through [orderRepository].
   final TransactionRepository? transactionRepository;
+  final OrderRepository? orderRepository;
 
   @override
   State<NewSalePage> createState() => _NewSalePageState();
 }
 
+/// Per-item form state. Each item owns its own controllers and HPP selection.
+class _ItemForm {
+  _ItemForm({required VoidCallback onChanged})
+      : product = TextEditingController(),
+        qty = TextEditingController(),
+        unitPrice = TextEditingController(),
+        income = TextEditingController() {
+    product.addListener(onChanged);
+    qty.addListener(onChanged);
+    unitPrice.addListener(onChanged);
+    income.addListener(onChanged);
+  }
+
+  final TextEditingController product;
+  final TextEditingController qty;
+  final TextEditingController unitPrice;
+  final TextEditingController income;
+  int? hppId;
+
+  int get qtyValue => int.tryParse(qty.text) ?? 0;
+  int get unitPriceValue => Rupiah.parse(unitPrice.text) ?? 0;
+  int get incomeValue => Rupiah.parse(income.text) ?? 0;
+  int get gmvValue => unitPriceValue * qtyValue;
+  int profitValue(int hppUnit) => incomeValue - (hppUnit * qtyValue);
+
+  void clear() {
+    product.clear();
+    qty.clear();
+    unitPrice.clear();
+    income.clear();
+    hppId = null;
+  }
+
+  void dispose() {
+    product.dispose();
+    qty.dispose();
+    unitPrice.dispose();
+    income.dispose();
+  }
+}
+
 class _NewSalePageState extends State<NewSalePage> {
-  final _formKey = GlobalKey<FormState>();
+  final _orderFormKey = GlobalKey<FormState>();
   final _scrollController = ScrollController();
-  final _product = TextEditingController();
   final _order = TextEditingController();
-  final _qty = TextEditingController();
-  final _unitPrice = TextEditingController();
   final _description = TextEditingController();
-  final _income = TextEditingController();
+
+  final List<_ItemForm> _items = [];
+  final List<GlobalKey<FormState>> _itemKeys = [];
 
   late final LiveSessionRepository _sessions;
   late final HppRepository _hppRepo;
   late final AccountRepository _accounts;
-  late final TransactionRepository _transactions;
+  late final OrderRepository _orders;
 
   List<LiveSession> _availableSessions = [];
   List<HppMaster> _hppItems = [];
   int? _liveSessionId;
-  int? _hppId;
   var _payment = PaymentStatus.pending;
   var _orderStatus = OrderStatus.newOrder;
   DateTime _transactionDate = _todayLocalDate();
@@ -67,15 +113,22 @@ class _NewSalePageState extends State<NewSalePage> {
     _sessions = widget.liveSessionRepository ?? LiveSessionRepository(AppDatabase.instance);
     _hppRepo = widget.hppRepository ?? HppRepository(AppDatabase.instance);
     _accounts = widget.accountRepository ?? AccountRepository(AppDatabase.instance);
-    _transactions = widget.transactionRepository ?? TransactionRepository(AppDatabase.instance);
-    _unitPrice.addListener(_refresh);
-    _qty.addListener(_refresh);
-    _income.addListener(_refresh);
+    _orders = widget.orderRepository ?? OrderRepository(AppDatabase.instance);
+    _addItemInternal();
     _load();
+  }
+
+  void _addItemInternal() {
+    _items.add(_ItemForm(onChanged: _refresh));
+    _itemKeys.add(GlobalKey<FormState>());
   }
 
   void _refresh() {
     if (mounted) setState(() {});
+  }
+
+  void _addItem() {
+    setState(_addItemInternal);
   }
 
   Future<void> _load() async {
@@ -96,22 +149,12 @@ class _NewSalePageState extends State<NewSalePage> {
     });
   }
 
-  int get _qtyValue => int.tryParse(_qty.text) ?? 0;
-  int get _unitPriceValue => Rupiah.parse(_unitPrice.text) ?? 0;
-  int get _incomeValue => Rupiah.parse(_income.text) ?? 0;
-  int get _gmvValue => _unitPriceValue * _qtyValue;
-
-  HppMaster? get _selectedHpp {
+  HppMaster? _hppById(int? id) {
+    if (id == null) return null;
     for (final h in _hppItems) {
-      if (h.id == _hppId) return h;
+      if (h.id == id) return h;
     }
     return null;
-  }
-
-  int get _profitValue {
-    final hpp = _selectedHpp;
-    if (hpp == null) return 0;
-    return _incomeValue - (hpp.unitAmount * _qtyValue);
   }
 
   Future<void> _pickTransactionDate() async {
@@ -127,55 +170,93 @@ class _NewSalePageState extends State<NewSalePage> {
   }
 
   Future<void> _pickPaidDate() async {
-    final selected = await showDatePicker(context: context, firstDate: DateTime(2000), lastDate: DateTime(2100), initialDate: _paidAt ?? DateTime.now());
+    final selected = await showDatePicker(
+      context: context,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+      initialDate: _paidAt ?? DateTime.now(),
+    );
     if (selected != null && mounted) setState(() => _paidAt = selected);
   }
 
   Future<void> _submit() async {
-    final unitPrice = Rupiah.parse(_unitPrice.text);
-    final income = Rupiah.parse(_income.text);
+    final orderValid = _orderFormKey.currentState?.validate() ?? false;
+    var firstInvalidItem = -1;
+    for (var i = 0; i < _items.length; i++) {
+      final ok = _itemKeys[i].currentState?.validate() ?? false;
+      if (!ok && firstInvalidItem == -1) firstInvalidItem = i;
+    }
     final paidError = TransactionValidator.paidAt(_payment, _paidAt);
-    final unitPriceError = TransactionValidator.unitPrice(unitPrice);
-    final selectedHpp = _selectedHpp;
-    if (selectedHpp == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('HPP wajib dipilih.')));
+
+    if (!orderValid || firstInvalidItem != -1 || paidError != null) {
+      final message = !orderValid
+          ? 'Periksa isian pada bagian atas.'
+          : firstInvalidItem != -1
+              ? 'Item ${firstInvalidItem + 1} tidak lengkap.'
+              : paidError!;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
       return;
     }
-    final incomeError = TransactionValidator.rupiah(income, 'Income');
-    if (!(_formKey.currentState?.validate() ?? false) || unitPriceError != null || incomeError != null || paidError != null) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(unitPriceError ?? incomeError ?? paidError ?? 'Periksa isian.')));
-      return;
-    }
+
     setState(() => _saving = true);
-    final qty = int.parse(_qty.text);
     final now = DateTime.now().toUtc();
-    final transaction = Transaction(
+    final txDate = DateTime(_transactionDate.year, _transactionDate.month, _transactionDate.day);
+    final normalizedPaidAt = TransactionValidator.normalizePaidAt(_payment, _paidAt);
+    final orderIdText = _order.text.trim();
+    final description = _description.text.trim().isEmpty ? null : _description.text.trim();
+
+    final items = <Transaction>[];
+    for (final it in _items) {
+      final hpp = _hppById(it.hppId)!;
+      final qty = it.qtyValue;
+      final unitPrice = it.unitPriceValue;
+      items.add(Transaction(
+        hppId: hpp.id,
+        hppUnitAmount: hpp.unitAmount,
+        unitPrice: unitPrice,
+        transactionDate: txDate,
+        productCode: it.product.text.trim(),
+        orderId: orderIdText,
+        quantity: qty,
+        gmvAmount: unitPrice * qty,
+        paymentDescription: description,
+        paymentStatus: _payment,
+        paidAt: normalizedPaidAt,
+        netIncomeAmount: it.incomeValue,
+        orderStatus: _orderStatus,
+        createdAt: now,
+        updatedAt: now,
+      ));
+    }
+
+    final order = Order(
+      accountId: 0,
+      orderId: orderIdText,
       liveSessionId: _liveSessionId,
-      hppId: selectedHpp.id,
-      hppUnitAmount: selectedHpp.unitAmount,
-      unitPrice: unitPrice!,
-      transactionDate: DateTime(_transactionDate.year, _transactionDate.month, _transactionDate.day),
-      productCode: _product.text.trim(),
-      orderId: _order.text.trim(),
-      quantity: qty,
-      gmvAmount: unitPrice * qty,
-      paymentDescription: _description.text.trim().isEmpty ? null : _description.text.trim(),
+      transactionDate: txDate,
       paymentStatus: _payment,
-      paidAt: TransactionValidator.normalizePaidAt(_payment, _paidAt),
-      netIncomeAmount: income!,
       orderStatus: _orderStatus,
+      paidAt: normalizedPaidAt,
+      returnShippingCompensation: 0,
+      paymentDescription: description,
       createdAt: now,
       updatedAt: now,
     );
+
     try {
-      await _transactions.insertTransaction(transaction);
+      await _orders.createWithItems(order, items);
       if (!mounted) return;
-      _product.clear();
+      // Reset to a fresh single-item form.
       _order.clear();
-      _qty.clear();
-      _unitPrice.clear();
       _description.clear();
-      _income.clear();
+      if (_items.length > 1) {
+        for (var i = 1; i < _items.length; i++) {
+          _items[i].dispose();
+        }
+        _items.removeRange(1, _items.length);
+        _itemKeys.removeRange(1, _itemKeys.length);
+      }
+      _items.first.clear();
       setState(() {
         _payment = PaymentStatus.pending;
         _orderStatus = OrderStatus.newOrder;
@@ -199,12 +280,11 @@ class _NewSalePageState extends State<NewSalePage> {
 
   @override
   void dispose() {
-    _unitPrice.removeListener(_refresh);
-    _qty.removeListener(_refresh);
-    _income.removeListener(_refresh);
-    for (final controller in [_product, _order, _qty, _unitPrice, _description, _income]) {
-      controller.dispose();
+    for (final it in _items) {
+      it.dispose();
     }
+    _order.dispose();
+    _description.dispose();
     _scrollController.dispose();
     super.dispose();
   }
@@ -212,89 +292,130 @@ class _NewSalePageState extends State<NewSalePage> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    return Form(
-      key: _formKey,
-      child: Scrollbar(
+    return Scrollbar(
+      controller: _scrollController,
+      thumbVisibility: true,
+      interactive: true,
+      child: SingleChildScrollView(
         controller: _scrollController,
-        thumbVisibility: true,
-        interactive: true,
-        child: ListView(
-          controller: _scrollController,
-          padding: const EdgeInsets.all(24),
-          children: [
-            Text('New Sale', style: Theme.of(context).textTheme.headlineSmall),
-            const SizedBox(height: 16),
-            DropdownButtonFormField<int>(
-              initialValue: _liveSessionId,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Live Session', border: OutlineInputBorder()),
-              items: _availableSessions.map((s) => DropdownMenuItem(value: s.id, child: Text(s.name))).toList(),
-              onChanged: (value) async {
-                setState(() => _liveSessionId = value);
-                await _sessions.setSelectedSessionId(value);
-              },
-            ),
-            _field(_product, 'Kode Barang', TransactionValidator.productCode),
-            _field(_order, 'ID Pesanan', TransactionValidator.orderId),
-            _control(ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Tanggal Transaksi'),
-              subtitle: Text('${_transactionDate.day}/${_transactionDate.month}/${_transactionDate.year}'),
-              trailing: OutlinedButton(onPressed: _pickTransactionDate, child: const Text('PILIH')),
-            )),
-            _field(_qty, 'Qty', TransactionValidator.quantity, number: true),
-            _field(_unitPrice, 'Harga Jual', (value) => TransactionValidator.unitPrice(Rupiah.parse(value ?? '')), number: true),
-            _readOnlyValue('GMV', Rupiah.format(_gmvValue)),
-            _field(_income, 'Income', (value) => TransactionValidator.rupiah(Rupiah.parse(value ?? ''), 'Income'), number: true),
-            _control(DropdownButtonFormField<int>(
-              initialValue: _hppId,
-              isExpanded: true,
-              validator: (v) => v == null ? 'HPP wajib dipilih.' : null,
-              decoration: const InputDecoration(labelText: 'HPP', border: OutlineInputBorder()),
-              items: _hppItems.map((h) => DropdownMenuItem(value: h.id, child: Text('${h.name} — ${Rupiah.format(h.unitAmount)}'))).toList(),
-              onChanged: (v) => setState(() => _hppId = v),
-            )),
-            _readOnlyValue('Profit', Rupiah.format(_profitValue)),
-            _field(_description, 'Keterangan Pembayaran', null),
-            _control(DropdownButtonFormField<PaymentStatus>(
-              initialValue: _payment,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Status Pembayaran', border: OutlineInputBorder()),
-              items: PaymentStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
-              onChanged: (value) {
-                if (value == null) return;
-                setState(() {
-                  _payment = value;
-                  if (value != PaymentStatus.paid) _paidAt = null;
-                });
-              },
-            )),
-            _control(ListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Tanggal Dibayar'),
-              subtitle: Text(_paidAt == null ? 'Belum dipilih' : '${_paidAt!.day}/${_paidAt!.month}/${_paidAt!.year}'),
-              trailing: OutlinedButton(onPressed: _payment == PaymentStatus.paid ? _pickPaidDate : null, child: const Text('PILIH')),
-            )),
-            _control(DropdownButtonFormField<OrderStatus>(
-              initialValue: _orderStatus,
-              isExpanded: true,
-              decoration: const InputDecoration(labelText: 'Status Pesanan', border: OutlineInputBorder()),
-              items: OrderStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
-              onChanged: (value) {
-                if (value != null) setState(() => _orderStatus = value);
-              },
-            )),
-            const SizedBox(height: 20),
-            FilledButton(onPressed: _saving ? null : _submit, child: Text(_saving ? 'MENYIMPAN...' : 'SUBMIT')),
-          ],
+        padding: const EdgeInsets.all(24),
+        child: Form(
+          key: _orderFormKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('New Sale', style: Theme.of(context).textTheme.headlineSmall),
+              const SizedBox(height: 16),
+              DropdownButtonFormField<int>(
+                initialValue: _liveSessionId,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Live Session', border: OutlineInputBorder()),
+                items: _availableSessions.map((s) => DropdownMenuItem(value: s.id, child: Text(s.name))).toList(),
+                onChanged: (value) async {
+                  setState(() => _liveSessionId = value);
+                  await _sessions.setSelectedSessionId(value);
+                },
+              ),
+              _control(ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Tanggal Transaksi'),
+                subtitle: Text('${_transactionDate.day}/${_transactionDate.month}/${_transactionDate.year}'),
+                trailing: OutlinedButton(onPressed: _pickTransactionDate, child: const Text('PILIH')),
+              )),
+              _field(_order, 'ID Pesanan', TransactionValidator.orderId),
+              const SizedBox(height: 8),
+              for (var i = 0; i < _items.length; i++) _buildItemBlock(i),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: OutlinedButton.icon(
+                  onPressed: _saving ? null : _addItem,
+                  icon: const Icon(Icons.add),
+                  label: const Text('TAMBAH BARANG'),
+                ),
+              ),
+              _field(_description, 'Keterangan Pembayaran', null),
+              _control(DropdownButtonFormField<PaymentStatus>(
+                initialValue: _payment,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Status Pembayaran', border: OutlineInputBorder()),
+                items: PaymentStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
+                onChanged: (value) {
+                  if (value == null) return;
+                  setState(() {
+                    _payment = value;
+                    if (value != PaymentStatus.paid) _paidAt = null;
+                  });
+                },
+              )),
+              _control(ListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('Tanggal Dibayar'),
+                subtitle: Text(_paidAt == null ? 'Belum dipilih' : '${_paidAt!.day}/${_paidAt!.month}/${_paidAt!.year}'),
+                trailing: OutlinedButton(onPressed: _payment == PaymentStatus.paid ? _pickPaidDate : null, child: const Text('PILIH')),
+              )),
+              _control(DropdownButtonFormField<OrderStatus>(
+                initialValue: _orderStatus,
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Status Pesanan', border: OutlineInputBorder()),
+                items: OrderStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
+                onChanged: (value) {
+                  if (value != null) setState(() => _orderStatus = value);
+                },
+              )),
+              const SizedBox(height: 20),
+              FilledButton(onPressed: _saving ? null : _submit, child: Text(_saving ? 'MENYIMPAN...' : 'SUBMIT')),
+            ],
+          ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildItemBlock(int index) {
+    final it = _items[index];
+    final hpp = _hppById(it.hppId);
+    final profit = hpp == null ? 0 : it.profitValue(hpp.unitAmount);
+    return Form(
+      key: _itemKeys[index],
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: 16),
+          Row(children: [
+            const Expanded(child: Divider()),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12),
+              child: Text('ITEM ${index + 1}', style: Theme.of(context).textTheme.titleMedium),
+            ),
+            const Expanded(child: Divider()),
+          ]),
+          _field(it.product, 'Kode Barang', TransactionValidator.productCode),
+          _field(it.qty, 'Qty', TransactionValidator.quantity, number: true),
+          _field(it.unitPrice, 'Harga Jual', (v) => TransactionValidator.unitPrice(Rupiah.parse(v ?? '')), number: true),
+          _readOnlyValue('GMV', Rupiah.format(it.gmvValue)),
+          _field(it.income, 'Income', (v) => TransactionValidator.rupiah(Rupiah.parse(v ?? ''), 'Income'), number: true),
+          _control(DropdownButtonFormField<int>(
+            initialValue: it.hppId,
+            isExpanded: true,
+            validator: (v) => v == null ? 'HPP wajib dipilih.' : null,
+            decoration: const InputDecoration(labelText: 'HPP', border: OutlineInputBorder()),
+            items: _hppItems.map((h) => DropdownMenuItem(value: h.id, child: Text('${h.name} — ${Rupiah.format(h.unitAmount)}'))).toList(),
+            onChanged: (v) => setState(() => it.hppId = v),
+          )),
+          _readOnlyValue('Profit', Rupiah.format(profit)),
+        ],
       ),
     );
   }
 
   Widget _field(TextEditingController controller, String label, String? Function(String?)? validator, {bool number = false}) => Padding(
         padding: const EdgeInsets.only(top: 16),
-        child: TextFormField(controller: controller, validator: validator, keyboardType: number ? TextInputType.number : null, decoration: InputDecoration(labelText: label, border: const OutlineInputBorder())),
+        child: TextFormField(
+          controller: controller,
+          validator: validator,
+          keyboardType: number ? TextInputType.number : null,
+          decoration: InputDecoration(labelText: label, border: const OutlineInputBorder()),
+        ),
       );
 
   Widget _control(Widget child) => Padding(padding: const EdgeInsets.only(top: 16), child: child);

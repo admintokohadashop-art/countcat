@@ -14,7 +14,7 @@ class AppDatabase {
 
   static final instance = AppDatabase._();
   static const databaseName = CountCatDataPaths.databaseFilename;
-  static const _schemaVersion = 6;
+  static const _schemaVersion = 8;
   sqflite.Database? _database;
   final sqflite.DatabaseFactory? _databaseFactory;
   final String? _databasePath;
@@ -92,9 +92,27 @@ class AppDatabase {
     await d.execute('CREATE TABLE account_settings (account_id INTEGER NOT NULL,key TEXT NOT NULL,value TEXT NOT NULL,updated_at TEXT NOT NULL,PRIMARY KEY(account_id,key))');
     await d.execute('CREATE TABLE hpp_master (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER NOT NULL,name TEXT NOT NULL,unit_amount INTEGER NOT NULL,is_active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
     await d.execute('CREATE TABLE live_sessions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,name TEXT NOT NULL,started_at TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL)');
-    await d.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,live_session_id INTEGER,hpp_id INTEGER,hpp_unit_amount INTEGER NOT NULL DEFAULT 0,unit_price INTEGER NOT NULL DEFAULT 0,transaction_date TEXT NOT NULL,product_code TEXT NOT NULL,order_id TEXT NOT NULL,quantity INTEGER NOT NULL,gmv_amount INTEGER NOT NULL,payment_description TEXT,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),paid_at TEXT,net_income_amount INTEGER NOT NULL,return_shipping_compensation INTEGER NOT NULL DEFAULT 0,order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,order_id))");
+
+    // Orders: order-level source of truth (M7-A). UNIQUE(account_id, order_id) is
+    // the one-and-only order-uniqueness guard.
+    await d.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER NOT NULL,order_id TEXT NOT NULL,live_session_id INTEGER,transaction_date TEXT NOT NULL,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),paid_at TEXT,return_shipping_compensation INTEGER NOT NULL DEFAULT 0,payment_description TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,order_id))");
+
+    // Transactions: item-level (M7-A). Legacy order-level columns kept as
+    // transitional mirrors for M1–M6 call-sites. The uniqueness constraint on
+    // items is (order_fk, item_index) — NOT (account_id, order_id), because
+    // multiple items share the same order_id inside one order.
+    await d.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,live_session_id INTEGER,hpp_id INTEGER,hpp_unit_amount INTEGER NOT NULL DEFAULT 0,unit_price INTEGER NOT NULL DEFAULT 0,transaction_date TEXT NOT NULL,product_code TEXT NOT NULL,order_id TEXT NOT NULL,quantity INTEGER NOT NULL,gmv_amount INTEGER NOT NULL,payment_description TEXT,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),paid_at TEXT,net_income_amount INTEGER NOT NULL,return_shipping_compensation INTEGER NOT NULL DEFAULT 0,order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,order_fk INTEGER,item_index INTEGER NOT NULL DEFAULT 0,UNIQUE(order_fk,item_index))");
+
     await d.execute('CREATE TABLE monthly_reports (account_id INTEGER,year INTEGER NOT NULL,month INTEGER NOT NULL,period_start TEXT NOT NULL,period_end TEXT NOT NULL,gmv_total INTEGER NOT NULL,net_income_total INTEGER NOT NULL,hpp_total INTEGER NOT NULL,profit_total INTEGER NOT NULL,submitted_at TEXT NOT NULL,UNIQUE(account_id,year,month))');
-    for (final sql in ['CREATE INDEX tx_account_index ON transactions(account_id)', 'CREATE INDEX sessions_account_index ON live_sessions(account_id)', 'CREATE INDEX hpp_account_index ON hpp_master(account_id,is_active)', 'CREATE INDEX reports_account_index ON monthly_reports(account_id)']) {
+
+    for (final sql in [
+      'CREATE INDEX tx_account_index ON transactions(account_id)',
+      'CREATE INDEX transactions_order_fk_index ON transactions(order_fk)',
+      'CREATE INDEX orders_account_index ON orders(account_id)',
+      'CREATE INDEX sessions_account_index ON live_sessions(account_id)',
+      'CREATE INDEX hpp_account_index ON hpp_master(account_id,is_active)',
+      'CREATE INDEX reports_account_index ON monthly_reports(account_id)',
+    ]) {
       await d.execute(sql);
     }
   }
@@ -112,6 +130,12 @@ class AppDatabase {
     }
     if (old == 3 || old == 4 || old == 5) {
       await _migrateTransactionsV5ToV6(d);
+    }
+    if (old == 3 || old == 4 || old == 5 || old == 6) {
+      await _migrateTransactionsV6ToV7(d);
+    }
+    if (old == 3 || old == 4 || old == 5 || old == 6 || old == 7) {
+      await _migrateTransactionsV7ToV8(d);
     }
   }
 
@@ -179,8 +203,12 @@ class AppDatabase {
             'order_status': row['order_status'],
             'created_at': createdAtRaw,
             'updated_at': row['updated_at'],
+            'order_fk': row['id'],
+            'item_index': 0,
           });
         }
+        await tx.execute('INSERT INTO orders (id,account_id,order_id,live_session_id,transaction_date,payment_status,order_status,paid_at,return_shipping_compensation,payment_description,created_at,updated_at) '
+            'SELECT id,account_id,order_id,live_session_id,transaction_date,payment_status,order_status,paid_at,return_shipping_compensation,payment_description,created_at,updated_at FROM transactions');
       } catch (_) {}
       try {
         await tx.execute('INSERT INTO monthly_reports(account_id,year,month,period_start,period_end,gmv_total,net_income_total,hpp_total,profit_total,submitted_at) SELECT $aid,year,month,period_start,period_end,gmv_total,net_income_total,hpp_total,profit_total,submitted_at FROM legacy_monthly_reports');
@@ -237,6 +265,40 @@ class AppDatabase {
   Future<void> _migrateTransactionsV5ToV6(sqflite.Database d) async {
     await d.transaction((tx) async {
       await tx.execute('ALTER TABLE transactions ADD COLUMN return_shipping_compensation INTEGER NOT NULL DEFAULT 0');
+    });
+  }
+
+  Future<void> _migrateTransactionsV6ToV7(sqflite.Database d) async {
+    await d.transaction((tx) async {
+      await tx.execute("CREATE TABLE orders (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER NOT NULL,order_id TEXT NOT NULL,live_session_id INTEGER,transaction_date TEXT NOT NULL,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),paid_at TEXT,return_shipping_compensation INTEGER NOT NULL DEFAULT 0,payment_description TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,UNIQUE(account_id,order_id))");
+      await tx.execute('CREATE INDEX orders_account_index ON orders(account_id)');
+      await tx.execute('INSERT INTO orders (id,account_id,order_id,live_session_id,transaction_date,payment_status,order_status,paid_at,return_shipping_compensation,payment_description,created_at,updated_at) '
+          'SELECT id,account_id,order_id,live_session_id,transaction_date,payment_status,order_status,paid_at,return_shipping_compensation,payment_description,created_at,updated_at FROM transactions');
+      await tx.execute('ALTER TABLE transactions ADD COLUMN order_fk INTEGER');
+      await tx.execute('ALTER TABLE transactions ADD COLUMN item_index INTEGER NOT NULL DEFAULT 0');
+      await tx.execute('UPDATE transactions SET order_fk = id');
+      await tx.execute('CREATE INDEX transactions_order_fk_index ON transactions(order_fk)');
+    });
+  }
+
+  /// v7 -> v8: replace `UNIQUE(account_id, order_id)` with `UNIQUE(order_fk,
+  /// item_index)` on `transactions`.
+  ///
+  /// Why: after M7-A, an order may contain N items. All items share the same
+  /// `order_id` inside one account, so `UNIQUE(account_id, order_id)` blocks
+  /// inserting the second item. The correct item-level uniqueness is
+  /// `(order_fk, item_index)`. Order-level uniqueness stays on `orders`.
+  Future<void> _migrateTransactionsV7ToV8(sqflite.Database d) async {
+    await d.transaction((tx) async {
+      await tx.execute('DROP INDEX IF EXISTS tx_account_index');
+      await tx.execute('DROP INDEX IF EXISTS transactions_order_fk_index');
+      await tx.execute('ALTER TABLE transactions RENAME TO legacy_transactions_v7');
+      await tx.execute("CREATE TABLE transactions (id INTEGER PRIMARY KEY AUTOINCREMENT,account_id INTEGER,live_session_id INTEGER,hpp_id INTEGER,hpp_unit_amount INTEGER NOT NULL DEFAULT 0,unit_price INTEGER NOT NULL DEFAULT 0,transaction_date TEXT NOT NULL,product_code TEXT NOT NULL,order_id TEXT NOT NULL,quantity INTEGER NOT NULL,gmv_amount INTEGER NOT NULL,payment_description TEXT,payment_status TEXT NOT NULL CHECK(payment_status IN ('pending','paid','cancelled')),paid_at TEXT,net_income_amount INTEGER NOT NULL,return_shipping_compensation INTEGER NOT NULL DEFAULT 0,order_status TEXT NOT NULL CHECK(order_status IN ('new','dropoff','shipping','closed','returned','cancel')),created_at TEXT NOT NULL,updated_at TEXT NOT NULL,order_fk INTEGER,item_index INTEGER NOT NULL DEFAULT 0,UNIQUE(order_fk,item_index))");
+      await tx.execute('CREATE INDEX tx_account_index ON transactions(account_id)');
+      await tx.execute('CREATE INDEX transactions_order_fk_index ON transactions(order_fk)');
+      await tx.execute("INSERT INTO transactions (id,account_id,live_session_id,hpp_id,hpp_unit_amount,unit_price,transaction_date,product_code,order_id,quantity,gmv_amount,payment_description,payment_status,paid_at,net_income_amount,return_shipping_compensation,order_status,created_at,updated_at,order_fk,item_index) "
+          "SELECT id,account_id,live_session_id,hpp_id,hpp_unit_amount,unit_price,transaction_date,product_code,order_id,quantity,gmv_amount,payment_description,payment_status,paid_at,net_income_amount,return_shipping_compensation,order_status,created_at,updated_at,order_fk,item_index FROM legacy_transactions_v7");
+      await tx.execute('DROP TABLE legacy_transactions_v7');
     });
   }
 }

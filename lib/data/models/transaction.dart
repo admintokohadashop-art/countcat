@@ -3,6 +3,8 @@ import 'statuses.dart';
 class Transaction {
   const Transaction({
     this.id,
+    this.orderFk,
+    this.itemIndex = 0,
     this.accountId,
     this.liveSessionId,
     this.hppId,
@@ -23,23 +25,30 @@ class Transaction {
     required this.updatedAt,
   });
 
-  final int? id, accountId, liveSessionId, hppId;
+  final int? id;
+  /// Parent order primary key (`orders.id`). Nullable during FASE A
+  /// (transitional); the write path begins populating it in FASE B.
+  final int? orderFk;
+  /// Stable position within an order, used for visual grouping.
+  final int itemIndex;
+  final int? accountId, liveSessionId, hppId;
   final int hppUnitAmount, unitPrice, quantity, gmvAmount, netIncomeAmount;
-  /// Kompensasi ongkir retur. Satu order = satu nilai. 0 = belum diinput.
+  /// Kompensasi ongkir retur. Order-level in M7-A; transitional mirror here.
   final int returnShippingCompensation;
-  /// Tanggal bisnis transaksi. Selalu dinormalkan ke local midnight.
+  /// Business date. Local midnight. Persisted as `YYYY-MM-DD`.
   final DateTime transactionDate;
   final String productCode, orderId;
   final String? paymentDescription;
   final PaymentStatus paymentStatus;
-  /// Setelah dibaca dari DB, selalu local time. Saat disimpan, dikonversi ke UTC
-  /// oleh [toMap] sehingga wall-clock day tidak bergeser.
+  /// Local time after read; stored as UTC ISO-8601.
   final DateTime? paidAt;
   final OrderStatus orderStatus;
   final DateTime createdAt, updatedAt;
 
   factory Transaction.fromMap(Map<String, Object?> m) => Transaction(
         id: m['id'] as int?,
+        orderFk: m['order_fk'] as int?,
+        itemIndex: m['item_index'] as int? ?? 0,
         accountId: m['account_id'] as int?,
         liveSessionId: m['live_session_id'] as int?,
         hppId: m['hpp_id'] as int?,
@@ -54,9 +63,7 @@ class Transaction {
         gmvAmount: m['gmv_amount'] as int,
         paymentDescription: m['payment_description'] as String?,
         paymentStatus: PaymentStatus.fromValue(m['payment_status'] as String),
-        paidAt: m['paid_at'] == null
-            ? null
-            : DateTime.parse(m['paid_at'] as String).toLocal(),
+        paidAt: m['paid_at'] == null ? null : DateTime.parse(m['paid_at'] as String).toLocal(),
         netIncomeAmount: m['net_income_amount'] as int,
         returnShippingCompensation: m['return_shipping_compensation'] as int? ?? 0,
         orderStatus: OrderStatus.fromValue(m['order_status'] as String),
@@ -66,6 +73,8 @@ class Transaction {
 
   Map<String, Object?> toMap() => {
         'id': id,
+        'order_fk': orderFk,
+        'item_index': itemIndex,
         'account_id': accountId,
         'live_session_id': liveSessionId,
         'hpp_id': hppId,
@@ -88,6 +97,8 @@ class Transaction {
 
   Transaction copyWith({
     int? id,
+    Object? orderFk = _unset,
+    int? itemIndex,
     Object? accountId = _unset,
     Object? liveSessionId = _unset,
     Object? hppId = _unset,
@@ -109,6 +120,8 @@ class Transaction {
   }) =>
       Transaction(
         id: id ?? this.id,
+        orderFk: identical(orderFk, _unset) ? this.orderFk : orderFk as int?,
+        itemIndex: itemIndex ?? this.itemIndex,
         accountId: identical(accountId, _unset) ? this.accountId : accountId as int?,
         liveSessionId: identical(liveSessionId, _unset) ? this.liveSessionId : liveSessionId as int?,
         hppId: identical(hppId, _unset) ? this.hppId : hppId as int?,

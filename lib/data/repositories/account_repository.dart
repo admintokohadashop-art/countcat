@@ -53,40 +53,25 @@ class AccountRepository {
     activeAccountChanged.value++;
   }
 
-  /// Deletes the given account and all data owned by it in a single DB
-  /// transaction. Other accounts are untouched, and the database file is
-  /// never recreated or deleted.
+  /// Deletes the given account and all data owned by it (M6 + M7 cascade).
   ///
-  /// Steps:
-  /// - Read `selected_live_session_id` from global settings; if it points to
-  ///   a session owned by this account, delete that setting so it does not
-  ///   become stale. If it points to another account's session, leave it
-  ///   untouched.
-  /// - Remove rows from `transactions`, `monthly_reports`, `live_sessions`,
-  ///   `hpp_master`, `account_settings` where `account_id == account.id`.
-  /// - Remove the row from `accounts`.
-  /// - If the deleted account was active, promote the oldest remaining account
-  ///   (by `created_at, id`) or clear `active_account_id` when none remain.
-  /// - Outside the DB transaction, delete the avatar file if and only if it
-  ///   was owned by CountCat's AvatarStorage.
-  /// - Notify [activeAccountChanged] so other screens react.
+  /// Cascades, inside one DB transaction:
+  ///   - orders (M7-A) then transactions (items) — items first because FK is
+  ///     not enforced at the DB level during FASE B.
+  ///   - live_sessions, hpp_master, account_settings, monthly_reports.
+  ///   - accounts row.
+  /// Also clears `selected_live_session_id` when it pointed at one of this
+  /// account's sessions, and promotes another account to active if needed.
+  /// The database file itself is never deleted; avatar deletion is limited to
+  /// files CountCat owns.
   Future<void> delete(Account account) async {
     final id = account.id;
     if (id == null) return;
     final db = await _database.database;
     await db.transaction((tx) async {
-      // Must read `selected_live_session_id` BEFORE deleting live_sessions so
-      // we can detect whether the currently selected session belongs to the
-      // account being removed.
-      final selectedRows = await tx.query(
-        'settings',
-        columns: ['value'],
-        where: 'key = ?',
-        whereArgs: ['selected_live_session_id'],
-      );
-      final selectedSessionId = selectedRows.isEmpty
-          ? null
-          : int.tryParse(selectedRows.single['value'] as String);
+      // Clear selected session if it belongs to the deleted account.
+      final selectedRows = await tx.query('settings', columns: ['value'], where: 'key = ?', whereArgs: ['selected_live_session_id']);
+      final selectedSessionId = selectedRows.isEmpty ? null : int.tryParse(selectedRows.single['value'] as String);
       if (selectedSessionId != null) {
         final owned = await tx.query(
           'live_sessions',
@@ -99,7 +84,9 @@ class AccountRepository {
         }
       }
 
+      // M7: items first, then orders (no FK enforced yet).
       await tx.delete('transactions', where: 'account_id = ?', whereArgs: [id]);
+      await tx.delete('orders', where: 'account_id = ?', whereArgs: [id]);
       await tx.delete('monthly_reports', where: 'account_id = ?', whereArgs: [id]);
       await tx.delete('live_sessions', where: 'account_id = ?', whereArgs: [id]);
       await tx.delete('hpp_master', where: 'account_id = ?', whereArgs: [id]);

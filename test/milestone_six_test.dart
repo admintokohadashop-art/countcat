@@ -5,8 +5,10 @@ import 'package:tiktok_seller/data/database/app_database.dart';
 import 'package:tiktok_seller/data/models/account.dart';
 import 'package:tiktok_seller/data/models/live_session.dart';
 import 'package:tiktok_seller/data/models/monthly_report.dart';
+import 'package:tiktok_seller/data/models/order.dart';
 import 'package:tiktok_seller/data/models/statuses.dart';
 import 'package:tiktok_seller/data/models/transaction.dart';
+import 'package:tiktok_seller/data/models/transaction_with_order.dart';
 import 'package:tiktok_seller/data/repositories/account_repository.dart';
 import 'package:tiktok_seller/data/repositories/live_session_repository.dart';
 import 'package:tiktok_seller/data/repositories/monthly_report_repository.dart';
@@ -30,10 +32,12 @@ Transaction _tx({
   OrderStatus orderStatus = OrderStatus.closed,
   PaymentStatus paymentStatus = PaymentStatus.paid,
   int? id,
+  int? orderFk,
 }) {
   final now = DateTime(2026);
   return Transaction(
     id: id,
+    orderFk: orderFk,
     transactionDate: transactionDate,
     productCode: productCode,
     orderId: orderId,
@@ -50,6 +54,21 @@ Transaction _tx({
     updatedAt: now,
   );
 }
+
+Order _orderFromItem(Transaction t) => Order(
+      id: t.orderFk,
+      accountId: t.accountId ?? 1,
+      orderId: t.orderId,
+      liveSessionId: t.liveSessionId,
+      transactionDate: t.transactionDate,
+      paymentStatus: t.paymentStatus,
+      orderStatus: t.orderStatus,
+      paidAt: t.paidAt,
+      returnShippingCompensation: t.returnShippingCompensation,
+      paymentDescription: t.paymentDescription,
+      createdAt: t.createdAt,
+      updatedAt: t.updatedAt,
+    );
 
 class _FakeAccountRepository implements AccountRepository {
   _FakeAccountRepository({this.accounts = const [], this.active});
@@ -96,6 +115,29 @@ class _FakeTransactionRepository implements TransactionRepository {
   Future<void> deleteTransaction(int id) async {}
   @override
   Future<void> updateTransaction(Transaction transaction) async {}
+  @override
+  Future<List<TransactionWithOrder>> listItemsJoined({
+    String search = '',
+    int? liveSessionId,
+    PaymentStatus? paymentStatus,
+    OrderStatus? orderStatus,
+    DateTime? periodStart,
+    DateTime? periodEnd,
+  }) async {
+    return _items.where((t) {
+      if (search.isNotEmpty && !t.orderId.contains(search) && !t.productCode.contains(search)) return false;
+      if (orderStatus != null && t.orderStatus != orderStatus) return false;
+      if (paymentStatus != null && t.paymentStatus != paymentStatus) return false;
+      if (liveSessionId != null && t.liveSessionId != liveSessionId) return false;
+      if (periodStart != null && t.transactionDate.isBefore(periodStart)) return false;
+      if (periodEnd != null && !t.transactionDate.isBefore(periodEnd)) return false;
+      return true;
+    }).map((t) => TransactionWithOrder(item: t, order: _orderFromItem(t))).toList();
+  }
+  @override
+  Future<void> updateItem(Transaction item) async {}
+  @override
+  Future<void> deleteItem(int id) async {}
 }
 
 class _FakeLiveSessionRepository implements LiveSessionRepository {
@@ -109,6 +151,12 @@ class _FakeLiveSessionRepository implements LiveSessionRepository {
   Future<void> setSelectedSessionId(int? sessionId) async {}
   @override
   Future<LiveSession?> getSelectedSession() async => null;
+  @override
+  Future<void> updateSession({required int id, required String name, required DateTime startedAt}) async {}
+  @override
+  Future<bool> hasTransactions(int sessionId) async => false;
+  @override
+  Future<void> deleteSession(int sessionId) async {}
 }
 
 class _FakeMonthlyReportRepository implements MonthlyReportRepository {
@@ -403,6 +451,7 @@ void main() {
       final fakeTx = _FakeTransactionRepository([
         _tx(
           id: 1,
+          orderFk: 1,
           orderId: 'ORDER-COPY-XYZ',
           transactionDate: DateTime(2026, 8, 20),
           orderStatus: OrderStatus.closed,
@@ -417,6 +466,7 @@ void main() {
           liveSessionRepository: _FakeLiveSessionRepository(),
         ),
       ));
+      await tester.pump();
       await tester.pump();
       await tester.pump();
 
