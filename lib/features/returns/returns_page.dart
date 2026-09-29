@@ -27,6 +27,7 @@ class ReturnsPage extends StatefulWidget {
 
 class _ReturnsPageState extends State<ReturnsPage> {
   final _searchController = TextEditingController();
+  final _scrollController = ScrollController();
   late final TransactionRepository _transactions;
   late final OrderRepository _orders;
 
@@ -76,7 +77,6 @@ class _ReturnsPageState extends State<ReturnsPage> {
     }).toList();
   }
 
-  /// One entry per returned order, items sorted by item_index.
   List<_ReturnedOrderGroup> get _returnedGroups {
     final map = <String, _ReturnedOrderGroup>{};
     for (final v in _periodItems) {
@@ -165,6 +165,7 @@ class _ReturnsPageState extends State<ReturnsPage> {
   @override
   void dispose() {
     _searchController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -175,80 +176,87 @@ class _ReturnsPageState extends State<ReturnsPage> {
     final totals = _totals;
     final groups = _returnedGroups;
 
-    return ListView(
-      padding: const EdgeInsets.all(24),
-      children: [
-        Text('Retur', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 16),
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _searchController,
-                onSubmitted: (_) => _search(),
-                decoration: const InputDecoration(
-                  labelText: 'Cari ID Pesanan',
-                  prefixIcon: Icon(Icons.search),
-                  border: OutlineInputBorder(),
+    return Scrollbar(
+      key: const ValueKey('returns_scrollbar'),
+      controller: _scrollController,
+      thumbVisibility: true,
+      interactive: true,
+      child: ListView(
+        controller: _scrollController,
+        padding: const EdgeInsets.all(24),
+        children: [
+          Text('Retur', style: Theme.of(context).textTheme.headlineSmall),
+          const SizedBox(height: 16),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _searchController,
+                  onSubmitted: (_) => _search(),
+                  decoration: const InputDecoration(
+                    labelText: 'Cari ID Pesanan',
+                    prefixIcon: Icon(Icons.search),
+                    border: OutlineInputBorder(),
+                  ),
                 ),
               ),
+              const SizedBox(width: 12),
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: FilledButton(onPressed: _search, child: const Text('SEARCH')),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: 280,
+            child: DropdownButtonFormField<ReturnPeriod?>(
+              initialValue: _selectedPeriod,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Periode', border: OutlineInputBorder()),
+              items: [
+                const DropdownMenuItem<ReturnPeriod?>(value: null, child: Text('SEMUA PERIODE')),
+                for (final p in _availablePeriods)
+                  DropdownMenuItem<ReturnPeriod?>(value: p, child: Text(p.label)),
+              ],
+              onChanged: (value) => setState(() => _selectedPeriod = value),
             ),
-            const SizedBox(width: 12),
-            Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: FilledButton(onPressed: _search, child: const Text('SEARCH')),
+          ),
+          if (_searchPerformed) ...[
+            const SizedBox(height: 16),
+            _SearchResult(
+              order: _searchedOrder,
+              items: _searchedItems,
+              onEdit: _editCompensation,
             ),
           ],
-        ),
-        const SizedBox(height: 12),
-        SizedBox(
-          width: 280,
-          child: DropdownButtonFormField<ReturnPeriod?>(
-            initialValue: _selectedPeriod,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Periode', border: OutlineInputBorder()),
-            items: [
-              const DropdownMenuItem<ReturnPeriod?>(value: null, child: Text('SEMUA PERIODE')),
-              for (final p in _availablePeriods)
-                DropdownMenuItem<ReturnPeriod?>(value: p, child: Text(p.label)),
-            ],
-            onChanged: (value) => setState(() => _selectedPeriod = value),
-          ),
-        ),
-        if (_searchPerformed) ...[
-          const SizedBox(height: 16),
-          _SearchResult(
-            order: _searchedOrder,
-            items: _searchedItems,
-            onEdit: _editCompensation,
-          ),
-        ],
-        const SizedBox(height: 24),
-        if (groups.isEmpty)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(child: Text('Belum ada paket retur periode ini.')),
-          )
-        else ...[
-          Text('Ringkasan Retur', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          Wrap(spacing: 24, runSpacing: 8, children: [
-            Text('Total Paket Retur: ${totals.returnedCount}'),
-            Text('Total Barang Retur: ${totals.returnedQty} barang'),
-            Text('Total Kompensasi Ongkir: ${Rupiah.format(totals.totalCompensation)}'),
-            Text('Income Aktif: ${Rupiah.format(totals.activeIncome)}'),
-            Text('Income Setelah Retur: ${Rupiah.format(totals.incomeAfterReturn)}'),
-            Text('Total HPP Aktif: ${Rupiah.format(totals.activeHpp)}'),
-            Text('Profit Setelah Retur: ${Rupiah.format(totals.profitAfterReturn)}'),
-          ]),
           const SizedBox(height: 24),
-          Text('Paket Retur', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          for (final g in groups)
-            _ReturnedOrderCard(group: g, onEdit: () => _editCompensation(g.order)),
+          if (groups.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 24),
+              child: Center(child: Text('Belum ada paket retur periode ini.')),
+            )
+          else ...[
+            Text('Ringkasan Retur', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            Wrap(spacing: 24, runSpacing: 8, children: [
+              Text('Total Paket Retur: ${totals.returnedCount}'),
+              Text('Total Barang Retur: ${totals.returnedQty} barang'),
+              Text('Total Kompensasi Ongkir: ${Rupiah.format(totals.totalCompensation)}'),
+              Text('Income Aktif: ${Rupiah.format(totals.activeIncome)}'),
+              Text('Income Setelah Retur: ${Rupiah.format(totals.incomeAfterReturn)}'),
+              Text('Total HPP Aktif: ${Rupiah.format(totals.activeHpp)}'),
+              Text('Profit Setelah Retur: ${Rupiah.format(totals.profitAfterReturn)}'),
+            ]),
+            const SizedBox(height: 24),
+            Text('Paket Retur', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: 8),
+            for (final g in groups)
+              _ReturnedOrderCard(group: g, onEdit: () => _editCompensation(g.order)),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
