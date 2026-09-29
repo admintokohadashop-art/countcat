@@ -32,6 +32,8 @@ class Transaction {
   final String productCode, orderId;
   final String? paymentDescription;
   final PaymentStatus paymentStatus;
+  /// Setelah dibaca dari DB, selalu local time. Saat disimpan, dikonversi ke UTC
+  /// oleh [toMap] sehingga wall-clock day tidak bergeser.
   final DateTime? paidAt;
   final OrderStatus orderStatus;
   final DateTime createdAt, updatedAt;
@@ -52,7 +54,9 @@ class Transaction {
         gmvAmount: m['gmv_amount'] as int,
         paymentDescription: m['payment_description'] as String?,
         paymentStatus: PaymentStatus.fromValue(m['payment_status'] as String),
-        paidAt: m['paid_at'] == null ? null : DateTime.parse(m['paid_at'] as String),
+        paidAt: m['paid_at'] == null
+            ? null
+            : DateTime.parse(m['paid_at'] as String).toLocal(),
         netIncomeAmount: m['net_income_amount'] as int,
         returnShippingCompensation: m['return_shipping_compensation'] as int? ?? 0,
         orderStatus: OrderStatus.fromValue(m['order_status'] as String),
@@ -74,7 +78,7 @@ class Transaction {
         'gmv_amount': gmvAmount,
         'payment_description': paymentDescription,
         'payment_status': paymentStatus.value,
-        'paid_at': paidAt?.toIso8601String(),
+        'paid_at': paidAt?.toUtc().toIso8601String(),
         'net_income_amount': netIncomeAmount,
         'return_shipping_compensation': returnShippingCompensation,
         'order_status': orderStatus.value,

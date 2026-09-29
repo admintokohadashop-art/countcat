@@ -25,6 +25,8 @@ class _FakeAccountRepository implements AccountRepository {
   Future<Account> create({required String name, String description = '', String? photoPath}) async => throw UnimplementedError();
   @override
   Future<void> update(Account account) async {}
+  @override
+  Future<void> delete(Account account) async {}
 }
 
 class _FakeLiveSessionRepository implements LiveSessionRepository {
@@ -215,8 +217,6 @@ void main() {
     await _selectField<int>(tester, 'HPP', 10);
     expect(find.text('Rp6.000'), findsOneWidget);
     await _selectField<int>(tester, 'HPP', 11);
-    // Rupiah.format renders negatives as "Rp-4.000" (prefix "Rp", then the
-    // signed number). This matches production behavior; no formatter change.
     expect(find.text('Rp-4.000'), findsOneWidget);
   });
 
@@ -243,8 +243,6 @@ void main() {
     await _enter(tester, 'Income', '1000');
     await _selectField<int>(tester, 'HPP', 10);
     await _submit(tester);
-    // The same message is also shown in a SnackBar; scope the assertion to the
-    // inline error rendered inside the Harga Jual field.
     final hargaJualField = _textFormFieldByLabel('Harga Jual');
     expect(hargaJualField, findsOneWidget);
     expect(find.descendant(of: hargaJualField, matching: find.text('Harga Jual harus lebih dari 0.')), findsOneWidget);
@@ -303,8 +301,6 @@ void main() {
 
   testWidgets('paid-date button is disabled for pending and enabled for paid', (tester) async {
     await _pumpPage(tester, hppRepo: _FakeHppRepository([_hpp()]), txRepo: _FakeTransactionRepository());
-    // Two "PILIH" buttons now exist (transaction date and paid date); the paid
-    // date one is rendered last in the ListView.
     final pilihFinder = find.widgetWithText(OutlinedButton, 'PILIH').last;
     expect(pilihFinder, findsOneWidget);
     var button = tester.widget<OutlinedButton>(pilihFinder);

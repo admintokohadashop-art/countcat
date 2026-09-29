@@ -37,6 +37,7 @@ class NewSalePage extends StatefulWidget {
 
 class _NewSalePageState extends State<NewSalePage> {
   final _formKey = GlobalKey<FormState>();
+  final _scrollController = ScrollController();
   final _product = TextEditingController();
   final _order = TextEditingController();
   final _qty = TextEditingController();
@@ -204,6 +205,7 @@ class _NewSalePageState extends State<NewSalePage> {
     for (final controller in [_product, _order, _qty, _unitPrice, _description, _income]) {
       controller.dispose();
     }
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -212,68 +214,81 @@ class _NewSalePageState extends State<NewSalePage> {
     if (_loading) return const Center(child: CircularProgressIndicator());
     return Form(
       key: _formKey,
-      child: ListView(padding: const EdgeInsets.all(24), children: [
-        Text('New Sale', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 16),
-        DropdownButtonFormField<int>(
-          initialValue: _liveSessionId,
-          decoration: const InputDecoration(labelText: 'Live Session', border: OutlineInputBorder()),
-          items: _availableSessions.map((s) => DropdownMenuItem(value: s.id, child: Text(s.name))).toList(),
-          onChanged: (value) async {
-            setState(() => _liveSessionId = value);
-            await _sessions.setSelectedSessionId(value);
-          },
+      child: Scrollbar(
+        controller: _scrollController,
+        thumbVisibility: true,
+        interactive: true,
+        child: ListView(
+          controller: _scrollController,
+          padding: const EdgeInsets.all(24),
+          children: [
+            Text('New Sale', style: Theme.of(context).textTheme.headlineSmall),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<int>(
+              initialValue: _liveSessionId,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Live Session', border: OutlineInputBorder()),
+              items: _availableSessions.map((s) => DropdownMenuItem(value: s.id, child: Text(s.name))).toList(),
+              onChanged: (value) async {
+                setState(() => _liveSessionId = value);
+                await _sessions.setSelectedSessionId(value);
+              },
+            ),
+            _field(_product, 'Kode Barang', TransactionValidator.productCode),
+            _field(_order, 'ID Pesanan', TransactionValidator.orderId),
+            _control(ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Tanggal Transaksi'),
+              subtitle: Text('${_transactionDate.day}/${_transactionDate.month}/${_transactionDate.year}'),
+              trailing: OutlinedButton(onPressed: _pickTransactionDate, child: const Text('PILIH')),
+            )),
+            _field(_qty, 'Qty', TransactionValidator.quantity, number: true),
+            _field(_unitPrice, 'Harga Jual', (value) => TransactionValidator.unitPrice(Rupiah.parse(value ?? '')), number: true),
+            _readOnlyValue('GMV', Rupiah.format(_gmvValue)),
+            _field(_income, 'Income', (value) => TransactionValidator.rupiah(Rupiah.parse(value ?? ''), 'Income'), number: true),
+            _control(DropdownButtonFormField<int>(
+              initialValue: _hppId,
+              isExpanded: true,
+              validator: (v) => v == null ? 'HPP wajib dipilih.' : null,
+              decoration: const InputDecoration(labelText: 'HPP', border: OutlineInputBorder()),
+              items: _hppItems.map((h) => DropdownMenuItem(value: h.id, child: Text('${h.name} — ${Rupiah.format(h.unitAmount)}'))).toList(),
+              onChanged: (v) => setState(() => _hppId = v),
+            )),
+            _readOnlyValue('Profit', Rupiah.format(_profitValue)),
+            _field(_description, 'Keterangan Pembayaran', null),
+            _control(DropdownButtonFormField<PaymentStatus>(
+              initialValue: _payment,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Status Pembayaran', border: OutlineInputBorder()),
+              items: PaymentStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _payment = value;
+                  if (value != PaymentStatus.paid) _paidAt = null;
+                });
+              },
+            )),
+            _control(ListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Tanggal Dibayar'),
+              subtitle: Text(_paidAt == null ? 'Belum dipilih' : '${_paidAt!.day}/${_paidAt!.month}/${_paidAt!.year}'),
+              trailing: OutlinedButton(onPressed: _payment == PaymentStatus.paid ? _pickPaidDate : null, child: const Text('PILIH')),
+            )),
+            _control(DropdownButtonFormField<OrderStatus>(
+              initialValue: _orderStatus,
+              isExpanded: true,
+              decoration: const InputDecoration(labelText: 'Status Pesanan', border: OutlineInputBorder()),
+              items: OrderStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
+              onChanged: (value) {
+                if (value != null) setState(() => _orderStatus = value);
+              },
+            )),
+            const SizedBox(height: 20),
+            FilledButton(onPressed: _saving ? null : _submit, child: Text(_saving ? 'MENYIMPAN...' : 'SUBMIT')),
+          ],
         ),
-        _field(_product, 'Kode Barang', TransactionValidator.productCode),
-        _field(_order, 'ID Pesanan', TransactionValidator.orderId),
-        _control(ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Tanggal Transaksi'),
-          subtitle: Text('${_transactionDate.day}/${_transactionDate.month}/${_transactionDate.year}'),
-          trailing: OutlinedButton(onPressed: _pickTransactionDate, child: const Text('PILIH')),
-        )),
-        _field(_qty, 'Qty', TransactionValidator.quantity, number: true),
-        _field(_unitPrice, 'Harga Jual', (value) => TransactionValidator.unitPrice(Rupiah.parse(value ?? '')), number: true),
-        _readOnlyValue('GMV', Rupiah.format(_gmvValue)),
-        _field(_income, 'Income', (value) => TransactionValidator.rupiah(Rupiah.parse(value ?? ''), 'Income'), number: true),
-        _control(DropdownButtonFormField<int>(
-          initialValue: _hppId,
-          validator: (v) => v == null ? 'HPP wajib dipilih.' : null,
-          decoration: const InputDecoration(labelText: 'HPP', border: OutlineInputBorder()),
-          items: _hppItems.map((h) => DropdownMenuItem(value: h.id, child: Text('${h.name} — ${Rupiah.format(h.unitAmount)}'))).toList(),
-          onChanged: (v) => setState(() => _hppId = v),
-        )),
-        _readOnlyValue('Profit', Rupiah.format(_profitValue)),
-        _field(_description, 'Keterangan Pembayaran', null),
-        _control(DropdownButtonFormField<PaymentStatus>(
-          initialValue: _payment,
-          decoration: const InputDecoration(labelText: 'Status Pembayaran', border: OutlineInputBorder()),
-          items: PaymentStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
-          onChanged: (value) {
-            if (value == null) return;
-            setState(() {
-              _payment = value;
-              if (value != PaymentStatus.paid) _paidAt = null;
-            });
-          },
-        )),
-        _control(ListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('Tanggal Dibayar'),
-          subtitle: Text(_paidAt == null ? 'Belum dipilih' : '${_paidAt!.day}/${_paidAt!.month}/${_paidAt!.year}'),
-          trailing: OutlinedButton(onPressed: _payment == PaymentStatus.paid ? _pickPaidDate : null, child: const Text('PILIH')),
-        )),
-        _control(DropdownButtonFormField<OrderStatus>(
-          initialValue: _orderStatus,
-          decoration: const InputDecoration(labelText: 'Status Pesanan', border: OutlineInputBorder()),
-          items: OrderStatus.values.map((status) => DropdownMenuItem(value: status, child: Text(status.label))).toList(),
-          onChanged: (value) {
-            if (value != null) setState(() => _orderStatus = value);
-          },
-        )),
-        const SizedBox(height: 20),
-        FilledButton(onPressed: _saving ? null : _submit, child: Text(_saving ? 'MENYIMPAN...' : 'SUBMIT')),
-      ]),
+      ),
     );
   }
 
